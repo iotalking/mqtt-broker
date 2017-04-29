@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 
@@ -27,8 +28,35 @@ func run() {
 		log.Debug("dashboad http started")
 		log.Println(s.ListenAndServe())
 	}()
+	duration := time.Second
+	var _secondsTimer = time.NewTimer(duration)
+	var lastSentMsgCnt = Overview.SentMsgCnt
+	var lastRecvMsgCnt = Overview.RecvMsgCnt
+	var lastPerTime = time.Now()
+	var perCnt AtmI64
+	var spsTotall AtmI64
+	var rpsTotall AtmI64
 	for {
 		select {
+		case <-_secondsTimer.C:
+			//每秒计算一次平均数
+			tm := time.Now().Sub(lastPerTime)
+			sps := (Overview.SentMsgCnt - lastSentMsgCnt) / AtmI64(tm.Seconds())
+			rps := (Overview.RecvMsgCnt - lastRecvMsgCnt) / AtmI64(tm.Seconds())
+			perCnt++
+			if sps > 0 {
+				spsTotall += sps
+				Overview.SentMsgPerSeconds.Set(int64(rpsTotall / perCnt))
+			}
+			if rps > 0 {
+				rpsTotall += rps
+				Overview.RecvMsgPerSeconds.Set(int64(rpsTotall / perCnt))
+			}
+
+			lastPerTime = time.Now()
+			lastSentMsgCnt = Overview.SentMsgCnt
+			lastRecvMsgCnt = Overview.RecvMsgCnt
+			_secondsTimer.Reset(duration)
 		case <-Overview.getChan:
 			log.Debug("geting overview data")
 			Overview.outChan <- *Overview
@@ -36,6 +64,9 @@ func run() {
 	}
 }
 func (this *OverviewData) Get(w http.ResponseWriter, r *http.Request) {
+	tm := time.Now().Sub(startTime)
+	Overview.RunTimeString = tm.String()
+	Overview.RunNanoSeconds.Set(tm.Nanoseconds())
 	log.Debug("OverviewData.Get")
 	select {
 	case this.getChan <- 0:
@@ -70,6 +101,7 @@ func SetLogLevel(w http.ResponseWriter, r *http.Request) {
 
 func GetSessions(w http.ResponseWriter, r *http.Request) {
 	log.Debug("dashboard.GetSessions")
+
 	list := sessionMgr.GetSessions()
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "\t")

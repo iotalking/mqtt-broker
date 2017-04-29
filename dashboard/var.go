@@ -1,12 +1,16 @@
 package dashboard
 
 import (
+	"time"
+
 	"github.com/iotalking/mqtt-broker/safe-runtine"
 )
 
 type OverviewData struct {
 	//总运行时间(纳秒)
 	RunNanoSeconds AtmI64
+
+	RunTimeString string
 
 	//总接入消息数
 	RecvMsgCnt AtmI64
@@ -19,6 +23,11 @@ type OverviewData struct {
 
 	//总发送消息数
 	SentMsgCnt AtmI64
+
+	//每秒接入消息数
+	RecvMsgPerSeconds AtmI64
+	//每秒发送消息数
+	SentMsgPerSeconds AtmI64
 
 	//在线客户端
 	ActiveClients AtmI64
@@ -67,3 +76,9 @@ type OverviewData struct {
 }
 
 var Overview = &OverviewData{}
+
+var startTime time.Time
+
+func init() {
+	startTime = time.Now()
+}
