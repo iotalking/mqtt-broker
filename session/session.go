@@ -1,19 +1,18 @@
 package session
 
 import (
+	"errors"
 	"net"
 	"sync/atomic"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
 
-	"github.com/iotalking/mqtt-broker/config"
 	"github.com/iotalking/mqtt-broker/safe-runtine"
 
 	"github.com/eclipse/paho.mqtt.golang/packets"
 
 	"github.com/iotalking/mqtt-broker/ticker"
-	"github.com/iotalking/mqtt-broker/utils"
 )
 
 //通道要保存服务端mqtt会话数据，比如tipic过滤器等
@@ -34,12 +33,6 @@ type Session struct {
 	//runtine的启动时间戳
 	startTime time.Time
 
-	//连接超时定时器
-	connectTmTimer *ticker.Timer
-	connectTmChan  chan struct{}
-	//客户端连接数据
-	connectResultChan chan error
-
 	//最新的消息ID
 	//递增1
 	lastMsgId int64
@@ -48,16 +41,9 @@ type Session struct {
 	resendChan chan interface{}
 
 	//Publish消息的chan
-	publishList *utils.List
-
+	publishChan chan *packets.PublishPacket
 	//从远端接收到的消息队列
-	remoteMsgList *utils.List
-
-	//心跳包定时器
-	pingTimer *ticker.Timer
-	//心跳应答包超时定时器
-	//接收到消息和已经发送消息都要重置此定时器
-	pingrespTimer *ticker.Timer
+	remoteMsgChan chan packets.ControlPacket
 
 	//Channel发送完一个消息
 	//这里注意不能用阻塞发送，可能会导致session和channel.sendRun死锁
@@ -91,122 +77,24 @@ func NewSession(mgr *SessionMgr, conn net.Conn, isServer bool) *Session {
 		mgr:           mgr,
 		isServer:      isServer,
 		resendChan:    make(chan interface{}),
-		publishList:   utils.NewList(),
-		remoteMsgList: utils.NewList(),
+		publishChan:   make(chan *packets.PublishPacket),
+		remoteMsgChan: make(chan packets.ControlPacket),
 		sentMsgChan:   make(SentChan, 1),
-
-		pingTimer:      ticker.NewTimer(nil),
-		pingrespTimer:  ticker.NewTimer(nil),
-		connectTmTimer: ticker.NewTimer(nil),
 	}
 	s.channel = NewChannel(conn, s)
 
-	runtine.Go(func(r *runtine.SafeRuntine) {
-		s.runtine = r
-		s.startTime = time.Now()
-		log.Debug("session running")
-		s.run()
-	})
 	return s
 }
 
-func (this *Session) run() {
-	//先启动connect检测定时器
-	//作为服务端时，如果超时，直接将连接断开，未超时，则要取消此定时器
-	//作为客户端时，如果超时，直接断开连接，将告诉调用者连接失败
-	this.connectTmTimer.Reset(time.Duration(config.ConnectTimeout)*time.Second, nil)
-	log.Debug("session.run")
+func (this *Session) Send(msg packets.ControlPacket) error {
 
-	defer func() {
-		this.pingrespTimer.Stop()
-		this.pingTimer.Stop()
-		this.connectTmTimer.Stop()
+	var resultChan = make(chan error)
 
-		atomic.StoreInt32(&this.connected, 0)
-		atomic.StoreInt32(&this.closed, 1)
-
-		log.Debug("session exit")
-
-	}()
-
-	var err error
-	for {
-		log.Debug("session select [[")
-		select {
-		case err := <-this.channel.Error():
-			//channel有错误发生
-			log.Error("channel err:", err)
-			if this.IsConnected() {
-				log.Debug("session.mgr.OnDisconnected")
-				this.mgr.OnDisconnected(this)
-			} else {
-				log.Debug("session.mgr.OnConnectTimeout")
-				this.mgr.OnConnectTimeout(this)
-			}
-		//接入客户的CONNECT消息超时
-		case <-this.runtine.IsInterrupt:
-			log.Debugf("Session run IsInterrupt")
-			return
-
-		case <-this.pingTimer.Wait():
-			//要分服务端和客户端
-			if this.isServer {
-				//心跳包超时，断开连接
-				this.mgr.OnDisconnected(this)
-				break
-			} else {
-				this.Ping()
-			}
-		case <-this.pingrespTimer.Wait():
-			//客户接入心跳应该包超时，断开连接
-			this.mgr.OnDisconnected(this)
-			break
-		case <-this.connectTmTimer.Wait():
-			this.mgr.OnConnectTimeout(this)
-			break
-		case data := <-this.resendChan:
-
-			//要重发msgId
-			if _sendingData, ok := data.(*sendingData); ok {
-				if publishMsg, ok2 := _sendingData.msg.(*packets.PublishPacket); ok2 {
-					publishMsg.Dup = true
-				}
-				this.Send(_sendingData.msg, nil)
-				_sendingData.retryCount++
-				_sendingData.retryTimer.Reset(time.Duration(config.SentTimeout)*time.Second, _sendingData)
-			}
-
-		case <-this.sentMsgChan:
-			//channel发送完一个消息，会告诉session，以重置心跳包定时器
-			log.Debug("session sentMsgChan recv")
-			this.ResetPingTimer()
-		case <-this.remoteMsgList.Wait():
-			err = this.procFrontRemoteMsg()
-			if err != nil {
-				break
-			}
-		case <-this.publishList.Wait():
-			//发送前面的消息
-			this.publishFront()
-		}
-		log.Debug("session select ]]")
-		if err != nil {
-			//如果处理消息有错误发生，则断开连接
-			log.Errorf("process input message error:", err)
-			this.channel.Close()
-			return
-		}
+	if this.channel.IsStop() {
+		return errors.New("channel is closed")
 	}
-}
-
-func (this *Session) Send(msg packets.ControlPacket, ch SentChan) {
-	if ch == nil {
-		log.Debug("session.Send:", msg, this.sentMsgChan)
-		this.channel.Send(msg, this.sentMsgChan)
-	} else {
-		this.channel.Send(msg, ch)
-	}
-
+	this.channel.Send(msg, resultChan)
+	return <-resultChan
 }
 
 //判断是否已经连接成功
@@ -227,12 +115,10 @@ func (this *Session) Close() {
 		log.Debug("session is closed")
 		return
 	}
+	atomic.StoreInt32(&this.closed, 1)
 	log.Debug("session closing channel")
 	this.channel.Close()
-	log.Debug("session stoping self runtine")
-	this.runtine.Stop()
-	log.Debug("session stop finish")
-
+	log.Debug("session is closed")
 	return
 }
 
@@ -240,8 +126,6 @@ func (this *Session) ResetPingTimer() {
 	if this.IsClosed() {
 		return
 	}
-	this.pingTimer.Stop()
-	this.pingrespTimer.Stop()
 }
 
 //发送ping消息
@@ -250,12 +134,12 @@ func (this *Session) Ping() {
 		return
 	}
 	pingMsg := &packets.PingreqPacket{}
-	this.Send(pingMsg, nil)
+	this.Send(pingMsg)
 }
 
 //给服务器发送连接消息
 //收到CONNACK或者超时时，通过SentChan告诉调用者，连接成功还是失败
-func (this *Session) Connect(msg *packets.ConnectPacket) <-chan error {
+func (this *Session) Connect(msg *packets.ConnectPacket) error {
 	if this.IsConnected() {
 		return nil
 	}
@@ -264,20 +148,21 @@ func (this *Session) Connect(msg *packets.ConnectPacket) <-chan error {
 		panic("server can't call this function")
 		return nil
 	}
-	this.Send(msg, nil)
-	this.connectResultChan = make(chan error)
-	return this.connectResultChan
+	return this.Send(msg)
 }
 
 func (this *Session) RecvMsg(msg packets.ControlPacket) {
-	this.remoteMsgList.Push(msg)
-}
-func (this *Session) procFrontRemoteMsg() (err error) {
-	v := this.remoteMsgList.Pop()
-	if v == nil {
+	if this.IsClosed() {
+		log.Debug("RecvMsg session is cloed")
 		return
 	}
-	var msg = v.(packets.ControlPacket)
+	this.procFrontRemoteMsg(msg)
+
+}
+
+//处理从远端接收到的消息
+func (this *Session) procFrontRemoteMsg(msg packets.ControlPacket) (err error) {
+
 	log.Debugf("procFrontRemoteMsg msg :", msg.String())
 
 	this.ResetPingTimer()
@@ -328,15 +213,7 @@ func (this *Session) procFrontRemoteMsg() (err error) {
 //qos=1时，session收到PUBACK后才有结果
 //qos=2时, session收到PUBCOMP后才有结果
 func (this *Session) Publish(msg *packets.PublishPacket) {
-	this.publishList.Push(msg)
-}
-
-func (this *Session) publishFront() {
-	v := this.publishList.Pop()
-	if v != nil {
-		d := v.(*packets.PublishPacket)
-		this.onPublishData(d)
-	}
+	this.channel.Send(msg.Copy(), nil)
 }
 
 //连接消息超时
@@ -348,8 +225,19 @@ func (this *Session) onConnectTimeout() {
 	}
 	if !this.isServer {
 		//作为客户端时
-		this.connectResultChan <- packets.ConnErrors[packets.ErrNetworkError]
 	}
 	atomic.StoreInt32(&this.closed, 1)
 	atomic.StoreInt32(&this.connected, 0)
+}
+
+func (this *Session) OnChannelError(err error) {
+	if this.IsConnected() {
+		log.Debug("OnChannelError.mgr.OnDisconnected")
+		this.mgr.OnDisconnected(this)
+	} else {
+		log.Debug("OnChannelError.mgr.OnConnectTimeout")
+		this.mgr.OnConnectTimeout(this)
+	}
+	this.mgr.CloseSession(this)
+
 }

@@ -1,20 +1,16 @@
 package session
 
 import (
-	"errors"
 	"sync/atomic"
-	"time"
 
 	"github.com/eclipse/paho.mqtt.golang/packets"
-	"github.com/iotalking/mqtt-broker/config"
-	//	"github.com/iotalking/mqtt-broker/ticker"
 
 	log "github.com/Sirupsen/logrus"
 )
 
 //处理 CONNECT 消息
 //连接消息
-func (this *Session) onConnect(msg *packets.ConnectPacket) error {
+func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 	atomic.StoreInt32(&this.connected, 1)
 	this.clientId = msg.ClientIdentifier
 
@@ -26,39 +22,37 @@ func (this *Session) onConnect(msg *packets.ConnectPacket) error {
 	this.mgr.OnConnected(this)
 
 	log.Debug("session.Send")
-	this.Send(conack, nil)
-	log.Debug("sessionMgr CancelSecondTicker")
-	this.connectTmTimer.Stop()
-	//如果是服务器要启动pingTimer定时器，收到ping包要重置pingTimer
 
-	this.pingTimer.Reset(time.Duration(config.PingTimeout)*time.Second, nil)
-	log.Debug("session.onConnect end")
-	return nil
+	err = this.Send(conack)
+
+	return
 }
 
 //处理 CONNACK 消息
 //连接应答消息
 //此消息只有作为客户端时才会收到
 func (this *Session) onConnack(msg *packets.ConnackPacket) error {
-	if this.connectResultChan == nil {
-		//客户端没有调用Connect，却从服务端收到连接应答消息，属于流程错误，断开连接
-		return errors.New("flow error")
-	}
 	atomic.StoreInt32(&this.connected, 1)
 	//如果是客户端要启动pingTimer定时器，定时发送定时包
 	//同时启动pingrespTimer定时器，检测服务器返回PINGRESP包有没有超时
 	//如果客户pingrespTimer时间内没有收到PINGRESP，则断开连接
-	this.pingTimer.Reset(time.Duration(config.PingTimeout)*time.Second, nil)
-	this.pingrespTimer.Reset(time.Duration(config.PingrespTimeout)*time.Second, nil)
 	return nil
 }
 
 //处理 PUBLISH 消息
 //发布消息
-func (this *Session) onPublish(msg *packets.PublishPacket) error {
+func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 	log.Debug("session onpublish")
-	this.mgr.Publish(msg, this)
-	return nil
+	//从mgr获取和tipic匹配的sessions
+	//TODO:获取匹配的sessions
+	sessions := this.mgr.getActiveSessions()
+	for _, s := range sessions {
+		err = s.Send(msg)
+		if err != nil {
+			break
+		}
+	}
+	return err
 }
 
 //处理 PUBACK 消息
@@ -97,9 +91,8 @@ func (this *Session) onSubscribe(msg *packets.SubscribePacket) error {
 	suback := packets.NewControlPacket(packets.Suback).(*packets.SubackPacket)
 	suback.MessageID = msg.MessageID
 	suback.ReturnCodes = []byte{0}
-	this.Send(suback, nil)
 
-	return nil
+	return this.Send(suback)
 }
 
 //处理 SUBACK – 订阅确认
@@ -124,8 +117,7 @@ func (this *Session) onUnsuback(msg *packets.UnsubackPacket) error {
 //处理 PINGREQ
 func (this *Session) onPingreq(msg *packets.PingreqPacket) error {
 	pingresp := packets.NewControlPacket(packets.Pingresp).(*packets.PingrespPacket)
-	this.Send(pingresp, nil)
-	return nil
+	return this.Send(pingresp)
 }
 
 //处理 PINGRESP
@@ -157,25 +149,18 @@ func (this *Session) onDisconnect(msg *packets.DisconnectPacket) error {
 //1.发送PUBLISH,如果超时没有收到PUBREC，要重发PUBLISH
 //2.发送PUBREL,如果超时没有收到PUBCOMP，要重发PUBREL
 //3.收到PUBCOMP,给发布者返回结果
-func (this *Session) onPublishData(msg *packets.PublishPacket) error {
+func (this *Session) onPublishData(msg *packets.PublishPacket) (err error) {
 	log.Debug("onPublishData")
 	msgId := this.lastMsgId + 1
 	this.lastMsgId++
 	msg.MessageID = uint16(msgId)
 	switch msg.Qos {
 	case 0:
-		this.Send(msg, nil)
+		err = this.Send(msg)
 
 	case 1, 2:
 		//都有多步流程
-		this.Send(msg, nil)
-		//		_sendingdata := &sendingData{
-		//			msg:        msg,
-		//			resultChan: nil,
-		//			retryTimer: ticker.NewTimer(this.resendChan),
-		//		}
-		//		//启动重发定时器
-		//		_sendingdata.retryTimer.Reset(time.Duration(config.SentTimeout)*time.Second, _sendingdata)
+		err = this.Send(msg)
 	}
-	return nil
+	return
 }

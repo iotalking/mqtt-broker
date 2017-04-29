@@ -2,7 +2,6 @@ package session
 
 import (
 	"net"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -11,22 +10,19 @@ import (
 	"github.com/iotalking/mqtt-broker/config"
 	"github.com/iotalking/mqtt-broker/dashboard"
 	"github.com/iotalking/mqtt-broker/safe-runtine"
-
-	"github.com/iotalking/mqtt-broker/utils"
 )
 
 type SentChan chan *SendData
 
 type SendData struct {
 	Msg packets.ControlPacket
-	//发送结果
-	Err error
-	//发送完成会把SendData发给调用者，以告诉其发送结果
-	SChan SentChan
+
+	Result chan<- error
 }
 
 type MsgReceiver interface {
 	RecvMsg(packets.ControlPacket)
+	OnChannelError(error)
 }
 type Channel struct {
 	//>0为已经退出
@@ -35,8 +31,7 @@ type Channel struct {
 	conn net.Conn
 
 	//接入从调用者写入的消息
-	sendList     *utils.List
-	sendDataPool *sync.Pool
+	sendChan chan *SendData
 
 	//写入从net.Conn里接入到的消息
 	msgReceiver MsgReceiver
@@ -44,19 +39,17 @@ type Channel struct {
 	errChn      chan error
 	recvRuntine *runtine.SafeRuntine
 	sendRuntine *runtine.SafeRuntine
+
+	//取后通讯的时间戳，即最后发包，收包时间
+	lastStamp int64
 }
 
 //New 创建通道
 //通过网络层接口进行数据通讯
 func NewChannel(c net.Conn, msgReceiver MsgReceiver) *Channel {
 	var channel = &Channel{
-		conn:     c,
-		sendList: utils.NewList(),
-		sendDataPool: &sync.Pool{
-			New: func() interface{} {
-				return &SendData{}
-			},
-		},
+		conn:        c,
+		sendChan:    make(chan *SendData),
 		msgReceiver: msgReceiver,
 		errChn:      make(chan error),
 	}
@@ -90,17 +83,14 @@ func (this *Channel) recvRun() {
 
 		msg, err := packets.ReadPacket(this)
 
-		log.Debugln("recvRun error:", err)
-		if err != nil {
-			select {
-			case this.errChn <- err:
-			default:
-			}
-			break
-		} else {
+		if err == nil {
 			this.msgReceiver.RecvMsg(msg)
+			dashboard.Overview.RecvMsgCnt.Add(1)
 			log.Debug("channel recv a msg:", msg.String())
-
+		} else {
+			this.msgReceiver.OnChannelError(err)
+			log.Error("recvRun error:", err)
+			break
 		}
 
 	}
@@ -109,6 +99,11 @@ func (this *Channel) recvRun() {
 
 func (this *Channel) sendRun() {
 
+	defer func() {
+		atomic.StoreInt32(&this.isStoped, 1)
+		close(this.sendChan)
+		log.Error("Channel sendChan has closed")
+	}()
 	for {
 		select {
 
@@ -116,83 +111,75 @@ func (this *Channel) sendRun() {
 			//要求安全退出
 			log.Debugln("recvRun IsInterrupt has closed:")
 			return
-		case <-this.sendList.Wait():
-			//发送最前面的消息
-			this.sendFrontMsg()
+		case data := <-this.sendChan:
+			//设置写超时
+			this.conn.SetWriteDeadline(time.Now().Add(time.Duration(config.SentTimeout) * time.Second))
+			//处理上层的消息
+			err := data.Msg.Write(this)
+
+			if data.Result != nil {
+				data.Result <- err
+			}
+
+			log.Debug("channel send msg :", data)
+			data.Msg = nil
+			//如果写失败，则退出runtine
+			if err != nil {
+				log.Error("sendRun write msg to conn error", err)
+				dashboard.Overview.SentErrClientCnt.Add(1)
+				return
+			}
+
+			dashboard.Overview.SentMsgCnt.Add(1)
 		}
 	}
 	log.Debug("channel recvRun exited")
 }
 
-//内部使用
-func (this *Channel) sendFrontMsg() {
-	v := this.sendList.Pop()
-	if v != nil {
-		//data用完后要还给pool
-		data := v.(*SendData)
-		//设置写超时
-		this.conn.SetWriteDeadline(time.Now().Add(time.Duration(config.SentTimeout) * time.Second))
-		//处理上层的消息
-		err := data.Msg.Write(this)
-		this.sendDataPool.Put(data)
-
-		if data.SChan != nil {
-			data.Err = err
-			//调用发送回调函数
-			select {
-			case data.SChan <- data:
-			default:
-			}
-
-		}
-		log.Debug("channel send msg :", data)
-		//如果写失败，则退出runtine
-		if err != nil {
-			log.Debugln("sendRun write msg to conn error", err)
-			dashboard.Overview.SentErrClientCnt.Add(1)
-			select {
-			case this.errChn <- err:
-			default:
-			}
-			return
-		}
-
-		dashboard.Overview.SentMsgCnt.Add(1)
-	}
-}
-
 //Send 将消息写入发送channel
 //如果channel的buffer满后，会阻塞
-func (this *Channel) Send(msg packets.ControlPacket, sc SentChan) {
+func (this *Channel) Send(msg packets.ControlPacket, resultChan chan<- error) {
+	if this.IsStop() {
+		log.Debug("channel is closed")
+		return
+	}
+	defer func() {
+		//如果this.sendChan关闭了会引发panic,Channel.Close调用后会关闭sendChan,
+		//如果不关闭sendChan，那么发送会不退出
+		err := recover()
+		if err != nil {
+			close(resultChan)
+			log.Error("Channel Send recover defer return")
+		}
+
+	}()
 	_sendData := &SendData{
-		Msg:   msg,
-		SChan: sc,
+		Msg:    msg,
+		Result: resultChan,
 	}
 	if publishMsg, ok := msg.(*packets.PublishPacket); ok {
 		switch publishMsg.Details().Qos {
 		case 0:
-			this.sendList.Push(_sendData)
+			this.sendChan <- _sendData
 		case 1, 2:
-			this.sendList.Push(_sendData)
+			this.sendChan <- _sendData
 		default:
 			log.Debugf("Channel qos error drop msg")
 		}
 	} else {
-		this.sendList.Push(_sendData)
+		this.sendChan <- _sendData
 	}
 
-}
-
-func (this *Channel) Error() <-chan error {
-	return this.errChn
 }
 
 //安全退出
 func (this *Channel) Close() {
 	if atomic.LoadInt32(&this.isStoped) > 0 {
+		log.Debug("Channel has closed")
 		return
 	}
 	//把下层的net.Conn关闭,让recvChn从net.Conn的接入中退出
+	atomic.StoreInt32(&this.isStoped, 1)
 	this.conn.Close()
 
 	this.sendRuntine.Stop()
@@ -201,5 +188,8 @@ func (this *Channel) Close() {
 	this.recvRuntine = nil
 	this.conn = nil
 
-	atomic.StoreInt32(&this.isStoped, 1)
+}
+
+func (this *Channel) IsStop() bool {
+	return atomic.LoadInt32(&this.isStoped) > 0
 }

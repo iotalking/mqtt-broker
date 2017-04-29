@@ -9,7 +9,8 @@ import (
 
 type SafeRuntine struct {
 	startedWG sync.WaitGroup
-	stopedWG  sync.WaitGroup
+
+	stopingChan chan bool
 
 	//SafeRuntine的运行函数里可以通过接收IsInterrupt chan来判断是否要安全退出
 	//调用都可以调用Stop便可以安全退出
@@ -20,21 +21,25 @@ type SafeRuntine struct {
 	//		}
 	//)
 	//
-	IsInterrupt chan struct{}
+	IsInterrupt chan bool
 
+	//stoped == 0 表示runtine没有运行
 	stoped int32
 }
 
 func Go(fn func(r *SafeRuntine)) *SafeRuntine {
 	var o SafeRuntine
 	o.startedWG.Add(1)
-	o.IsInterrupt = make(chan struct{})
+	o.IsInterrupt = make(chan bool)
+	o.stopingChan = make(chan bool)
 	go func() {
 		atomic.AddInt32(&o.stoped, 1)
 		o.startedWG.Done()
-		o.stopedWG.Add(1)
+
 		fn(&o)
-		o.stopedWG.Done()
+
+		close(o.stopingChan)
+
 		atomic.StoreInt32(&o.stoped, 0)
 	}()
 
@@ -47,10 +52,13 @@ func (this *SafeRuntine) Stop() {
 		log.Println("runtine has exit")
 		return
 	}
+	atomic.StoreInt32(&this.stoped, 0)
+
 	log.Debugln("runtine want to stop")
 	close(this.IsInterrupt)
 
-	this.stopedWG.Wait()
+	<-this.stopingChan
+
 	log.Debugln("runtine want to stoped")
 	return
 }

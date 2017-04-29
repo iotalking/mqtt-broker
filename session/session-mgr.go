@@ -8,7 +8,6 @@ import (
 
 	"github.com/iotalking/mqtt-broker/safe-runtine"
 	"github.com/iotalking/mqtt-broker/topic"
-	"github.com/iotalking/mqtt-broker/utils"
 
 	"github.com/eclipse/paho.mqtt.golang/packets"
 
@@ -18,17 +17,15 @@ import (
 type SessionMgr struct {
 	//主runtine
 	runtine *runtine.SafeRuntine
-	//消息分布runtine
-	publishRuntine *runtine.SafeRuntine
 
 	//用于处理新连接
-	newConnList *utils.List
+	newConnChan chan net.Conn
 	//连接验证超时
-	connectTimeoutList *utils.List
+	connectTimeoutChan chan *Session
 	//连接验证通过
-	connectedList *utils.List
+	connectedChan chan *Session
 	//已经连接难的session主动断开连接
-	disconnectList *utils.List
+	disconnectChan chan *Session
 
 	//保存未验证连接的session
 	waitingConnectSessionMap map[net.Conn]*Session
@@ -38,17 +35,15 @@ type SessionMgr struct {
 
 	subscriptionMgr *topic.SubscriptionMgr
 
-	//保存要发布的消息
-	publishList *utils.List
-	//循环使用mgrPublishData对象，减少gc时间
-	publishDataPool *sync.Pool
-
 	getSessionsChan chan byte
 	//返回json的active session和inactive session的clientId列表
 	getSessionsResultChan chan dashboard.SessionList
 
 	getActiveSessionsChan       chan byte
 	getActiveSessionsResultChan chan []*Session
+
+	closeSessionRuntine *runtine.SafeRuntine
+	closeSessionChan    chan *Session
 }
 
 var sessionMgr *SessionMgr
@@ -57,31 +52,38 @@ var sessionMgrOnce sync.Once
 func GetMgr() *SessionMgr {
 	sessionMgrOnce.Do(func() {
 		mgr := &SessionMgr{
-			connectedSessionMap:      make(map[string]*Session),
-			newConnList:              utils.NewList(),
-			subscriptionMgr:          topic.NewSubscriptionMgr(),
-			connectTimeoutList:       utils.NewList(),
-			connectedList:            utils.NewList(),
-			disconnectList:           utils.NewList(),
-			waitingConnectSessionMap: make(map[net.Conn]*Session),
-			publishList:              utils.NewList(),
-			publishDataPool: &sync.Pool{
-				New: func() interface{} {
-					return &mgrPublishData{}
-				},
-			},
+			connectedSessionMap:         make(map[string]*Session),
+			newConnChan:                 make(chan net.Conn),
+			subscriptionMgr:             topic.NewSubscriptionMgr(),
+			connectTimeoutChan:          make(chan *Session),
+			connectedChan:               make(chan *Session),
+			disconnectChan:              make(chan *Session),
+			waitingConnectSessionMap:    make(map[net.Conn]*Session),
 			getSessionsChan:             make(chan byte),
 			getSessionsResultChan:       make(chan dashboard.SessionList),
 			getActiveSessionsChan:       make(chan byte),
 			getActiveSessionsResultChan: make(chan []*Session),
+			closeSessionChan:            make(chan *Session),
 		}
 		runtine.Go(func(r *runtine.SafeRuntine) {
 			mgr.runtine = r
 			mgr.run()
 		})
 		runtine.Go(func(r *runtine.SafeRuntine) {
-			mgr.publishRuntine = r
-			mgr.publishRun()
+			mgr.closeSessionRuntine = r
+			for {
+				select {
+				case <-r.IsInterrupt:
+
+					return
+				case s := <-mgr.closeSessionChan:
+					log.Debug("sessionMgr closing session")
+					s.Close()
+					log.Debugf("sessionMgr has closed session:%s", s.clientId)
+
+				}
+			}
+			log.Debug("closeSessionRuntine is closed")
 		})
 		sessionMgr = mgr
 
@@ -95,8 +97,16 @@ func (this *SessionMgr) Close() {
 		log.Warnf("Close:sessionMgr istoped")
 		return
 	}
-	this.publishRuntine.Stop()
+	this.closeSessionRuntine.Stop()
 	this.runtine.Stop()
+}
+
+func (this *SessionMgr) CloseSession(s *Session) {
+	select {
+	case this.closeSessionChan <- s:
+	default:
+	}
+
 }
 func (this *SessionMgr) HandleConnection(c net.Conn) {
 	if this.runtine.IsStoped() {
@@ -104,7 +114,7 @@ func (this *SessionMgr) HandleConnection(c net.Conn) {
 		return
 	}
 
-	this.newConnList.Push(c)
+	this.newConnChan <- c
 }
 
 func (this *SessionMgr) run() {
@@ -112,31 +122,27 @@ func (this *SessionMgr) run() {
 		select {
 		case <-this.runtine.IsInterrupt:
 			break
-		case <-this.newConnList.Wait():
-			c := this.newConnList.Pop().(net.Conn)
+		case c := <-this.newConnChan:
 
 			log.Debugf("newConnChan got a conn.%s", c.RemoteAddr().String())
 			session := NewSession(this, c, true)
 			this.waitingConnectSessionMap[c] = session
 			dashboard.Overview.InactiveClients.Set(int64(len(this.waitingConnectSessionMap)))
-		case <-this.connectTimeoutList.Wait():
-			s := this.connectTimeoutList.Pop().(*Session)
+		case s := <-this.connectTimeoutChan:
+
 			delete(this.waitingConnectSessionMap, s.channel.conn)
 			s.Close()
 			dashboard.Overview.InactiveClients.Set(int64(len(this.waitingConnectSessionMap)))
-		case <-this.connectedList.Wait():
-			s := this.connectedList.Pop().(*Session)
+		case s := <-this.connectedChan:
+			log.Infof("session %s connected", s.clientId)
 			delete(this.waitingConnectSessionMap, s.channel.conn)
 			this.connectedSessionMap[s.clientId] = s
 			dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
 			dashboard.Overview.InactiveClients.Set(int64(len(this.waitingConnectSessionMap)))
-		case <-this.disconnectList.Wait():
-			s := this.disconnectList.Pop().(*Session)
-			log.Error("sessionMgr disconnet client:", s.clientId)
+		case s := <-this.disconnectChan:
+			log.Info("sessionMgr disconnet client:", s.clientId)
 			delete(this.connectedSessionMap, s.clientId)
 			//由session mgr来安全退出session,因为是由mgr创建的
-			log.Errorf("disconnecting count:%d", this.disconnectList.Len())
-			s.Close()
 			dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
 
 		case <-this.getSessionsChan:
@@ -170,68 +176,21 @@ type mgrPublishData struct {
 	session *Session
 }
 
-func (this *SessionMgr) publishRun() {
-	for {
-		select {
-		case <-this.publishList.Wait():
-			//发送最前的消息
-			for {
-				v := this.publishList.Pop()
-				if v != nil {
-					data := v.(*mgrPublishData)
-					sessions := this.getActiveSessions()
-					for _, s := range sessions {
-						log.Debugf("%#v", s)
-						if s.IsConnected() {
-							s.Publish(data.msg)
-						}
-					}
-
-					this.publishDataPool.Put(data)
-				} else {
-					break
-				}
-			}
-
-		}
-
-	}
-}
-
-//向指定主题广播消息
-//非阻塞
-func (this *SessionMgr) Publish(msg *packets.PublishPacket, session *Session) {
-
-	v := this.publishDataPool.Get()
-	if v != nil {
-		d := v.(*mgrPublishData)
-		d.msg = msg
-		d.session = session
-
-		this.publishList.Push(d)
-		dashboard.Overview.RecvMsgCnt.Add(1)
-		dashboard.Overview.CurPUblishBufferCnt.Set(int64(this.publishList.Len()))
-	} else {
-		log.Error("SessionMgr.Publish out of memory")
-	}
-
-}
-
 func (this *SessionMgr) OnConnected(session *Session) {
 	//不能阻塞session，不然会死锁
-	this.connectedList.Push(session)
+	this.connectedChan <- session
 
 }
 
 func (this *SessionMgr) OnDisconnected(session *Session) {
 	//不能阻塞session，不然会死锁
-	this.disconnectList.Push(session)
+	this.disconnectChan <- session
 }
 
 //连接验证超时
 func (this *SessionMgr) OnConnectTimeout(session *Session) {
 	//不能阻塞session，不然会死锁
-	this.connectTimeoutList.Push(session)
+	this.connectTimeoutChan <- session
 }
 
 func (this *SessionMgr) OnSubscribe(msg *packets.SubscribePacket, session *Session) {
