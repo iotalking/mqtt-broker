@@ -65,11 +65,11 @@ func GetMgr() *SessionMgr {
 			getActiveSessionsResultChan: make(chan []*Session),
 			closeSessionChan:            make(chan *Session),
 		}
-		runtine.Go(func(r *runtine.SafeRuntine) {
+		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
 			mgr.runtine = r
 			mgr.run()
 		})
-		runtine.Go(func(r *runtine.SafeRuntine) {
+		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
 			mgr.closeSessionRuntine = r
 			for {
 				select {
@@ -77,13 +77,15 @@ func GetMgr() *SessionMgr {
 
 					return
 				case s := <-mgr.closeSessionChan:
-					log.Debug("sessionMgr closing session")
+					log.Info("sessionMgr closing session")
+
 					s.Close()
-					log.Debugf("sessionMgr has closed session:%s", s.clientId)
+					dashboard.Overview.ClosingFiles.Add(-1)
+					log.Infof("sessionMgr has closed session:%s", s.clientId)
 
 				}
 			}
-			log.Debug("closeSessionRuntine is closed")
+			log.Info("closeSessionRuntine is closed")
 		})
 		sessionMgr = mgr
 
@@ -102,11 +104,8 @@ func (this *SessionMgr) Close() {
 }
 
 func (this *SessionMgr) CloseSession(s *Session) {
-	select {
-	case this.closeSessionChan <- s:
-	default:
-	}
-
+	dashboard.Overview.ClosingFiles.Add(1)
+	this.closeSessionChan <- s
 }
 func (this *SessionMgr) HandleConnection(c net.Conn) {
 	if this.runtine.IsStoped() {
@@ -123,16 +122,14 @@ func (this *SessionMgr) run() {
 		case <-this.runtine.IsInterrupt:
 			break
 		case c := <-this.newConnChan:
-
 			log.Debugf("newConnChan got a conn.%s", c.RemoteAddr().String())
 			session := NewSession(this, c, true)
 			this.waitingConnectSessionMap[c] = session
 			dashboard.Overview.InactiveClients.Set(int64(len(this.waitingConnectSessionMap)))
 		case s := <-this.connectTimeoutChan:
-
 			delete(this.waitingConnectSessionMap, s.channel.conn)
-			s.Close()
 			dashboard.Overview.InactiveClients.Set(int64(len(this.waitingConnectSessionMap)))
+			this.CloseSession(s)
 		case s := <-this.connectedChan:
 			log.Infof("session %s connected", s.clientId)
 			delete(this.waitingConnectSessionMap, s.channel.conn)
@@ -144,7 +141,7 @@ func (this *SessionMgr) run() {
 			delete(this.connectedSessionMap, s.clientId)
 			//由session mgr来安全退出session,因为是由mgr创建的
 			dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
-
+			this.CloseSession(s)
 		case <-this.getSessionsChan:
 			log.Debug("sessionMgr.getSessionsChan")
 			list := dashboard.SessionList{}

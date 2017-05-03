@@ -69,6 +69,14 @@ type OverviewData struct {
 	//添加的ticker总数
 	AddTickerCnt AtmI64
 
+	//打开的文件句柄数
+	OpenedFiles AtmI64
+	//打开文件峰值
+	MaxOpenedFiles AtmI64
+
+	//正在关闭的文件句柄数
+	ClosingFiles AtmI64
+
 	runtine *runtine.SafeRuntine
 
 	getChan chan byte

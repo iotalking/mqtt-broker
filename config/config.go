@@ -17,10 +17,13 @@ var PingTimeout int64 = 30
 var PingrespTimeout int64 = 45 //1.5 PingTimeout
 
 //发送channel的buffer的最大长度
-var MaxSizeOfSendChannel int = 100
+var MaxSizeOfSendChannel int = 1
 
 //接入channel的buffer的最大长度
 var MaxSizeOfRecvChannel int = 100
+
+//sessionMgr处理新连接的chan缓冲大小
+var MaxSizeOfNewConnectionChan int = 10000
 
 //连接超时时间,秒
 var ConnectTimeout time.Duration = time.Duration(3)

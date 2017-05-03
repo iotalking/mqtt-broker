@@ -11,7 +11,6 @@ import (
 //处理 CONNECT 消息
 //连接消息
 func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
-	atomic.StoreInt32(&this.connected, 1)
 	this.clientId = msg.ClientIdentifier
 
 	conack := packets.NewControlPacket(packets.Connack).(*packets.ConnackPacket)
@@ -24,6 +23,7 @@ func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 	log.Debug("session.Send")
 
 	err = this.Send(conack)
+	atomic.StoreInt32(&this.connected, 1)
 
 	return
 }
@@ -47,10 +47,13 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 	//TODO:获取匹配的sessions
 	sessions := this.mgr.getActiveSessions()
 	for _, s := range sessions {
-		err = s.Send(msg)
-		if err != nil {
-			break
+		if s.IsConnected() {
+			err = s.Send(msg)
+			if err != nil {
+				break
+			}
 		}
+
 	}
 	return err
 }

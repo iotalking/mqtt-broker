@@ -124,7 +124,7 @@ func run() {
 
 			}
 			//下一次定时器要减去遍历使用的时间
-			d = d - time.Since(last)
+			d = time.Second - time.Since(last)
 			if d < 0 {
 				d = 0
 			}

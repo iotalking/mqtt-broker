@@ -1,9 +1,9 @@
 package session
 
 import (
+	"errors"
 	"net"
 	"sync/atomic"
-	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/eclipse/paho.mqtt.golang/packets"
@@ -31,7 +31,7 @@ type Channel struct {
 	conn net.Conn
 
 	//接入从调用者写入的消息
-	sendChan chan *SendData
+	sendChan chan packets.ControlPacket
 
 	//写入从net.Conn里接入到的消息
 	msgReceiver MsgReceiver
@@ -49,16 +49,16 @@ type Channel struct {
 func NewChannel(c net.Conn, msgReceiver MsgReceiver) *Channel {
 	var channel = &Channel{
 		conn:        c,
-		sendChan:    make(chan *SendData),
+		sendChan:    make(chan packets.ControlPacket, config.MaxSizeOfSendChannel),
 		msgReceiver: msgReceiver,
 		errChn:      make(chan error),
 	}
-	channel.recvRuntine = runtine.Go(func(r *runtine.SafeRuntine) {
+	channel.recvRuntine = runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
 		channel.recvRuntine = r
 		log.Debug("channel recv running")
 		channel.recvRun()
 	})
-	channel.sendRuntine = runtine.Go(func(r *runtine.SafeRuntine) {
+	channel.sendRuntine = runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
 		channel.sendRuntine = r
 		log.Debug("channel send running")
 		channel.sendRun()
@@ -111,18 +111,9 @@ func (this *Channel) sendRun() {
 			//要求安全退出
 			log.Debugln("recvRun IsInterrupt has closed:")
 			return
-		case data := <-this.sendChan:
-			//设置写超时
-			this.conn.SetWriteDeadline(time.Now().Add(time.Duration(config.SentTimeout) * time.Second))
+		case msg := <-this.sendChan:
 			//处理上层的消息
-			err := data.Msg.Write(this)
-
-			if data.Result != nil {
-				data.Result <- err
-			}
-
-			log.Debug("channel send msg :", data)
-			data.Msg = nil
+			err := msg.Write(this)
 			//如果写失败，则退出runtine
 			if err != nil {
 				log.Error("sendRun write msg to conn error", err)
@@ -138,38 +129,29 @@ func (this *Channel) sendRun() {
 
 //Send 将消息写入发送channel
 //如果channel的buffer满后，会阻塞
-func (this *Channel) Send(msg packets.ControlPacket, resultChan chan<- error) {
+func (this *Channel) Send(msg packets.ControlPacket) (err error) {
 	if this.IsStop() {
 		log.Debug("channel is closed")
 		return
 	}
 	defer func() {
-		//如果this.sendChan关闭了会引发panic,Channel.Close调用后会关闭sendChan,
-		//如果不关闭sendChan，那么发送会不退出
-		err := recover()
-		if err != nil {
-			close(resultChan)
-			log.Error("Channel Send recover defer return")
+		if recover() != nil {
+			err = errors.New("channel.sendChan is closed")
 		}
-
 	}()
-	_sendData := &SendData{
-		Msg:    msg,
-		Result: resultChan,
-	}
 	if publishMsg, ok := msg.(*packets.PublishPacket); ok {
 		switch publishMsg.Details().Qos {
 		case 0:
-			this.sendChan <- _sendData
+			this.sendChan <- msg
 		case 1, 2:
-			this.sendChan <- _sendData
+			this.sendChan <- msg
 		default:
 			log.Debugf("Channel qos error drop msg")
 		}
 	} else {
-		this.sendChan <- _sendData
+		this.sendChan <- msg
 	}
-
+	return
 }
 
 //安全退出
@@ -181,7 +163,7 @@ func (this *Channel) Close() {
 	//把下层的net.Conn关闭,让recvChn从net.Conn的接入中退出
 	atomic.StoreInt32(&this.isStoped, 1)
 	this.conn.Close()
-
+	dashboard.Overview.OpenedFiles.Add(-1)
 	this.sendRuntine.Stop()
 	this.sendRuntine = nil
 	this.recvRuntine.Stop()

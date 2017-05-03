@@ -27,21 +27,21 @@ type SafeRuntine struct {
 	stoped int32
 }
 
-func Go(fn func(r *SafeRuntine)) *SafeRuntine {
+func Go(fn func(r *SafeRuntine, args ...interface{}), args ...interface{}) *SafeRuntine {
 	var o SafeRuntine
 	o.startedWG.Add(1)
 	o.IsInterrupt = make(chan bool)
 	o.stopingChan = make(chan bool)
-	go func() {
+	go func(args ...interface{}) {
 		atomic.AddInt32(&o.stoped, 1)
 		o.startedWG.Done()
 
-		fn(&o)
+		fn(&o, args...)
 
 		close(o.stopingChan)
 
 		atomic.StoreInt32(&o.stoped, 0)
-	}()
+	}(args...)
 
 	return &o
 }

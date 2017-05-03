@@ -86,15 +86,11 @@ func NewSession(mgr *SessionMgr, conn net.Conn, isServer bool) *Session {
 	return s
 }
 
-func (this *Session) Send(msg packets.ControlPacket) error {
-
-	var resultChan = make(chan error)
-
+func (this *Session) Send(msg packets.ControlPacket) (err error) {
 	if this.channel.IsStop() {
 		return errors.New("channel is closed")
 	}
-	this.channel.Send(msg, resultChan)
-	return <-resultChan
+	return this.channel.Send(msg)
 }
 
 //判断是否已经连接成功
@@ -213,7 +209,11 @@ func (this *Session) procFrontRemoteMsg(msg packets.ControlPacket) (err error) {
 //qos=1时，session收到PUBACK后才有结果
 //qos=2时, session收到PUBCOMP后才有结果
 func (this *Session) Publish(msg *packets.PublishPacket) {
-	this.channel.Send(msg.Copy(), nil)
+	if !this.IsConnected() {
+		return
+	}
+
+	this.channel.Send(msg.Copy())
 }
 
 //连接消息超时
@@ -238,6 +238,5 @@ func (this *Session) OnChannelError(err error) {
 		log.Debug("OnChannelError.mgr.OnConnectTimeout")
 		this.mgr.OnConnectTimeout(this)
 	}
-	this.mgr.CloseSession(this)
 
 }

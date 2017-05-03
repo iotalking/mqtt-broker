@@ -31,7 +31,7 @@ func Init(mgr SessionMgr) {
 	sessionMgr = mgr
 	Overview.getChan = make(chan byte)
 	Overview.outChan = make(chan OverviewData)
-	runtine.Go(func(r *runtine.SafeRuntine) {
+	runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
 		Overview.runtine = r
 		run()
 	})

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 
 	log "github.com/Sirupsen/logrus"
 
@@ -13,7 +16,6 @@ import (
 
 	"net/http"
 	_ "net/http/pprof"
-
 )
 
 func init() {
@@ -23,40 +25,88 @@ func init() {
 	log.SetLevel(log.DebugLevel)
 }
 
-func main() {
+var listenNewChan = make(chan net.Listener)
 
-	var sessionMgr = session.GetMgr()
+var wgExit sync.WaitGroup
 
-	l, err := net.Listen("tcp", ":1883")
+var basePort = 1883
+
+func mqttServer(r *runtine.SafeRuntine, args ...interface{}) {
+
+	wgExit.Add(1)
+	defer func() {
+		wgExit.Done()
+	}()
+	log.Debugf("args:%#v", args)
+	addr := fmt.Sprintf(":%d", basePort+args[0].(int))
+	l, err := net.Listen("tcp", addr)
 
 	if err != nil {
 		panic(err)
 	}
+	listenNewChan <- l
+	for {
+		c, err := l.Accept()
+
+		select {
+		case <-r.IsInterrupt:
+			log.Debugln("listener was instructed to quit")
+			return
+		default:
+		}
+		if err != nil {
+			log.Error("server accept error.", err)
+			break
+		} else {
+			dashboard.Overview.OpenedFiles.Add(1)
+			if dashboard.Overview.OpenedFiles > dashboard.Overview.MaxOpenedFiles {
+				dashboard.Overview.MaxOpenedFiles.Set(int64(dashboard.Overview.OpenedFiles))
+			}
+			sessionMgr.HandleConnection(c)
+		}
+
+	}
+}
+
+var sessionMgr = session.GetMgr()
+
+func main() {
+	level := flag.String("log", "debug", "log level string")
+	listenMax := flag.Int("listenMax", 1, "max of listen port")
+	flag.Parse()
+	loglevel, err := log.ParseLevel(*level)
+	if err != nil {
+		panic(err)
+	}
+	log.SetLevel(loglevel)
+
 	log.Debugln("server running")
 
 	go func() {
-		log.Println(http.ListenAndServe("localhost:6060", nil))
+		log.Println(http.ListenAndServe(":6060", nil))
 	}()
 
+	var closeAllListenChan = make(chan bool)
+	var listens []net.Listener
+
+	go func() {
+		for {
+			select {
+			case l := <-listenNewChan:
+				listens = append(listens, l)
+			case <-closeAllListenChan:
+				for _, l := range listens {
+					l.Close()
+				}
+				closeAllListenChan <- true
+			}
+		}
+	}()
 	dashboard.Init(sessionMgr)
 
-	mainRuntine := runtine.Go(func(r *runtine.SafeRuntine) {
-		for {
-			c, err := l.Accept()
-
-			select {
-			case <-r.IsInterrupt:
-				log.Debugln("listener was instructed to quit")
-				return
-			default:
-			}
-			if err != nil {
-				log.Debugln("server accept error.", err)
-			}
-
-			sessionMgr.HandleConnection(c)
-		}
-	})
+	for i := 0; i < *listenMax; i++ {
+		runtine.Go(mqttServer, i)
+	}
 
 	// Trap SIGINT to trigger a shutdown.
 	signals := make(chan os.Signal, 1)
@@ -66,8 +116,9 @@ func main() {
 	select {
 	case <-signals:
 		//关闭服务器的端口监听，以退出
-		l.Close()
-		mainRuntine.Stop()
+		closeAllListenChan <- true
+		<-closeAllListenChan
+		wgExit.Wait()
 	}
 	log.Debugf("server stoped:%#v", sessionMgr)
 }
