@@ -65,6 +65,7 @@ func mqttServer(r *runtine.SafeRuntine, args ...interface{}) {
 			if c == nil {
 				panic("Accept conn is nil")
 			}
+			dashboard.Overview.InactiveClients.Add(1)
 			dashboard.Overview.OpenedFiles.Add(1)
 			if dashboard.Overview.OpenedFiles > dashboard.Overview.MaxOpenedFiles {
 				dashboard.Overview.MaxOpenedFiles.Set(int64(dashboard.Overview.OpenedFiles))

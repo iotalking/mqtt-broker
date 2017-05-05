@@ -143,6 +143,10 @@ func (this *SessionMgr) tickerRun() {
 			usedNs := time.Now().Sub(preTime).Nanoseconds()
 			d := time.Second - time.Duration(usedNs)
 			log.Info("ontick used:", usedNs)
+			if usedNs > dashboard.Overview.MaxTickerBusyTime.Get() {
+				dashboard.Overview.MaxTickerBusyTime.Set(usedNs)
+			}
+			dashboard.Overview.LastTickerBusyTime.Set(usedNs)
 			secondTicker.Reset(d)
 		}
 
@@ -158,17 +162,17 @@ func (this *SessionMgr) run() {
 			log.Debugf("newConnChan got a conn.%s", c.RemoteAddr().String())
 			session := NewSession(this, c, true)
 			this.waitingConnectSessionMap[c] = session
-			dashboard.Overview.InactiveClients.Set(int64(len(this.waitingConnectSessionMap)))
+
 		case s := <-this.connectTimeoutChan:
 			delete(this.waitingConnectSessionMap, s.channel.conn)
-			dashboard.Overview.InactiveClients.Set(int64(len(this.waitingConnectSessionMap)))
+			dashboard.Overview.InactiveClients.Add(-1)
 			this.CloseSession(s)
 		case s := <-this.connectedChan:
 			log.Infof("session %s connected", s.clientId)
 			delete(this.waitingConnectSessionMap, s.channel.conn)
 			this.connectedSessionMap[s.clientId] = s
 			dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
-			dashboard.Overview.InactiveClients.Set(int64(len(this.waitingConnectSessionMap)))
+			dashboard.Overview.InactiveClients.Add(-1)
 			if dashboard.Overview.ActiveClients.Get() > dashboard.Overview.MaxActiveClinets.Get() {
 				dashboard.Overview.MaxActiveClinets.Set(dashboard.Overview.ActiveClients.Get())
 			}

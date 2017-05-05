@@ -117,6 +117,10 @@ type OverviewData struct {
 	PingrespRecvCnt    AtmI64
 	DisconectRecvCnt   AtmI64
 
+	//Ticker最后一个耗时(ns）
+	LastTickerBusyTime AtmI64
+	//定局定时器轮询最大耗时(ns）
+	MaxTickerBusyTime AtmI64
 	//私有成员
 	runtine *runtine.SafeRuntine
 

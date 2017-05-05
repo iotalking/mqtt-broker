@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -16,7 +17,7 @@ var mux = http.NewServeMux()
 func router() {
 	mux.HandleFunc(config.DashboordApiUrl+"/overview", Overview.Get)
 	mux.HandleFunc(config.DashboordApiUrl+"/log", SetLogLevel)
-	mux.HandleFunc(config.DashboordApiUrl+"/broker", GetSessions)
+	mux.HandleFunc(config.DashboordApiUrl+"/activeSessions", GetSessions)
 }
 
 func run() {
@@ -95,11 +96,28 @@ func (this *OverviewData) Get(w http.ResponseWriter, r *http.Request) {
 	case this.getChan <- 0:
 	default:
 	}
+	name := r.FormValue("name")
 
-	d := <-this.outChan
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "\t")
+	d := <-this.outChan
+	if len(name) > 0 {
+		log.Debug("name = ", name)
+		value := reflect.ValueOf(Overview).Elem().FieldByName(r.FormValue("name"))
+		if value.IsValid() {
+
+			encoder.Encode(fmt.Sprintf("%v", value))
+
+			log.Info("OverviewData.Get name=", value)
+			return
+		} else {
+			log.Debug("no field of ", name)
+		}
+	} else {
+		log.Debug("name is empty")
+	}
 	encoder.Encode(d)
+
 }
 
 func SetLogLevel(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +141,7 @@ func SetLogLevel(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetSessions(w http.ResponseWriter, r *http.Request) {
-	log.Debug("dashboard.GetSessions")
+	log.Debug("dashboard.GetActiveSessions")
 
 	list := sessionMgr.GetSessions()
 	encoder := json.NewEncoder(w)
