@@ -37,7 +37,7 @@ func mqttServer(r *runtine.SafeRuntine, args ...interface{}) {
 	defer func() {
 		wgExit.Done()
 	}()
-	log.Debugf("args:%#v", args)
+	log.Debugf("mqttServer args:%#v", args)
 	addr := fmt.Sprintf(":%d", basePort+args[0].(int))
 	l, err := net.Listen("tcp", addr)
 
@@ -46,6 +46,7 @@ func mqttServer(r *runtine.SafeRuntine, args ...interface{}) {
 	}
 	if len(dashboard.Overview.BrokerAddress) == 0 {
 		dashboard.Overview.BrokerAddress = l.Addr().String()
+		log.Info("brokerAddress:", dashboard.Overview.BrokerAddress)
 	}
 	listenNewChan <- l
 	for {
@@ -61,6 +62,9 @@ func mqttServer(r *runtine.SafeRuntine, args ...interface{}) {
 			log.Error("server accept error.", err)
 			break
 		} else {
+			if c == nil {
+				panic("Accept conn is nil")
+			}
 			dashboard.Overview.OpenedFiles.Add(1)
 			if dashboard.Overview.OpenedFiles > dashboard.Overview.MaxOpenedFiles {
 				dashboard.Overview.MaxOpenedFiles.Set(int64(dashboard.Overview.OpenedFiles))

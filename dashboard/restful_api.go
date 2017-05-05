@@ -66,11 +66,11 @@ func run() {
 			}
 			if sbps > 0 {
 				sbpsTotall += sbps
-				Overview.SentBytesPerSeconds.Set(int64(rpsTotall / perCnt))
+				Overview.SentBytesPerSeconds.Set(int64(rbpsTotall / perCnt))
 			}
 			if rbps > 0 {
 				rbpsTotall += rbps
-				Overview.RecvBytesPerSeconds.Set(int64(rpsTotall / perCnt))
+				Overview.RecvBytesPerSeconds.Set(int64(rbpsTotall / perCnt))
 			}
 			lastPerTime = time.Now()
 			lastSentMsgCnt = Overview.SentMsgCnt

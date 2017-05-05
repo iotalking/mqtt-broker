@@ -45,7 +45,7 @@ type OverviewData struct {
 	InactiveClients AtmI64
 
 	//最大在线客户端数
-	MaxonLineClinets AtmI64
+	MaxActiveClinets AtmI64
 
 	//总主题数
 	TipicCnt AtmI64

@@ -169,6 +169,9 @@ func (this *SessionMgr) run() {
 			this.connectedSessionMap[s.clientId] = s
 			dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
 			dashboard.Overview.InactiveClients.Set(int64(len(this.waitingConnectSessionMap)))
+			if dashboard.Overview.ActiveClients.Get() > dashboard.Overview.MaxActiveClinets.Get() {
+				dashboard.Overview.MaxActiveClinets.Set(dashboard.Overview.ActiveClients.Get())
+			}
 		case s := <-this.disconnectChan:
 			log.Info("sessionMgr disconnet client:", s.clientId)
 			delete(this.connectedSessionMap, s.clientId)

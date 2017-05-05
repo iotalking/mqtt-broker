@@ -55,6 +55,9 @@ func NewChannel(c net.Conn, session *Session) *Channel {
 		errChn:     make(chan error),
 		resendList: utils.NewList(),
 	}
+	if c == nil {
+		panic("NewChannel c == nil")
+	}
 	channel.recvRuntine = runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
 		channel.recvRuntine = r
 		log.Debug("channel recv running")

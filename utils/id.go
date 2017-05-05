@@ -20,11 +20,11 @@ func init() {
 	}
 	for _, nif := range netifs {
 		mac := nif.HardwareAddr.String()
-		log.Debug("%s\n", mac)
+		log.Debug("mac:%s", mac)
 		md5hash.Write([]byte(mac))
 	}
 	localId = hex.EncodeToString(md5hash.Sum(nil))
-	log.Info("localId:%s\n", localId)
+	log.Infof("localId:%s", localId)
 }
 func NewId() string {
 	sum := md5.Sum([]byte(fmt.Sprintf("%s%d", localId, time.Now().UnixNano())))
