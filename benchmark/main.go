@@ -39,7 +39,7 @@ var closeAll = make(chan bool)
 var localId string
 
 func newClientId() string {
-	sum := md5.Sum([]byte(fmt.Sprintf("%s%d", localId, time.Now().Nanosecond())))
+	sum := md5.Sum([]byte(fmt.Sprintf("%s%d", localId, time.Now().UnixNano())))
 	return hex.EncodeToString(sum[:])
 }
 func push(host string, port int, i int) {
@@ -73,9 +73,9 @@ func subscribe(host string, port int, i int, resultCh chan<- bool) {
 	opts := mqtt.NewClientOptions().AddBroker("tcp://" + host + fmt.Sprintf(":%d", port)).SetClientID(newClientId())
 	opts.SetConnectTimeout(100 * time.Second)
 
-	opts.SetKeepAlive(200 * time.Second)
+	opts.SetKeepAlive(20 * time.Second)
 	opts.SetDefaultPublishHandler(f)
-	opts.SetPingTimeout(100 * time.Second)
+	opts.SetPingTimeout(10 * time.Second)
 
 	defer func() {
 		recover()
