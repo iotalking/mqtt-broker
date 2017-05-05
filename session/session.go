@@ -12,7 +12,27 @@ import (
 
 	"github.com/eclipse/paho.mqtt.golang/packets"
 
+	"github.com/iotalking/mqtt-broker/config"
+	"github.com/iotalking/mqtt-broker/dashboard"
 	"github.com/iotalking/mqtt-broker/ticker"
+	"github.com/iotalking/mqtt-broker/utils"
+)
+
+type inflightingMsg struct {
+	//超时时间,纳秒
+	timeout int64
+	msg     packets.ControlPacket
+
+	msgType int
+	//已经重发的次数
+	retryCnt int
+}
+
+const (
+	//已经通知sessionMgr关闭session
+	closing = 1
+	//session的Close执行完成
+	closed = 2
 )
 
 //通道要保存服务端mqtt会话数据，比如tipic过滤器等
@@ -23,8 +43,8 @@ type Session struct {
 	isServer bool
 	runtine  *runtine.SafeRuntine
 
-	//>0表示关闭，不能再发送消息和接入到消息
-	closed int32
+	//>0不能再发送消息和接入到消息
+	clostep int32
 	//是否已经连接成功
 	//作为服务端时，已经接入到CONNECT包，并验证通过
 	//作为客户端时，表示服务端已经通过CONNECT包的验证
@@ -48,6 +68,12 @@ type Session struct {
 	//Channel发送完一个消息
 	//这里注意不能用阻塞发送，可能会导致session和channel.sendRun死锁
 	sentMsgChan SentChan
+
+	//最后一次读写成功的时间
+	timeout int64
+
+	//发送中的消息，超时需要重发
+	inflightingList *utils.List
 }
 
 //使用Session的一方调用Publish函数时，通过publishChan给Session传消息用
@@ -74,12 +100,13 @@ type sendingData struct {
 //客户端会话和服务端会议的主要区别只是要不要发ping消息
 func NewSession(mgr *SessionMgr, conn net.Conn, isServer bool) *Session {
 	s := &Session{
-		mgr:           mgr,
-		isServer:      isServer,
-		resendChan:    make(chan interface{}),
-		publishChan:   make(chan *packets.PublishPacket),
-		remoteMsgChan: make(chan packets.ControlPacket),
-		sentMsgChan:   make(SentChan, 1),
+		mgr:             mgr,
+		isServer:        isServer,
+		resendChan:      make(chan interface{}),
+		publishChan:     make(chan *packets.PublishPacket),
+		remoteMsgChan:   make(chan packets.ControlPacket),
+		sentMsgChan:     make(SentChan, 1),
+		inflightingList: utils.NewList(),
 	}
 	s.channel = NewChannel(conn, s)
 
@@ -88,7 +115,24 @@ func NewSession(mgr *SessionMgr, conn net.Conn, isServer bool) *Session {
 
 func (this *Session) Send(msg packets.ControlPacket) (err error) {
 	if this.channel.IsStop() {
-		return errors.New("channel is closed")
+		return errors.New("channel is clostep")
+	}
+	var msgtype int
+	switch msg.(type) {
+	case *packets.PublishPacket:
+		msgtype = packets.Publish
+	case *packets.PubrecPacket:
+		msgtype = packets.Pubrec
+	case *packets.PubrelPacket:
+		msgtype = packets.Pubrel
+
+	}
+	if msgtype > 0 {
+		this.inflightingList.Push(&inflightingMsg{
+			msg:     msg,
+			msgType: msgtype,
+			timeout: time.Now().UnixNano() + config.SentTimeout,
+		})
 	}
 	return this.channel.Send(msg)
 }
@@ -102,26 +146,22 @@ func (this *Session) IsConnected() bool {
 
 //判断是否已经关闭
 func (this *Session) IsClosed() bool {
-	return atomic.LoadInt32(&this.closed) > 0
+	return atomic.LoadInt32(&this.clostep) == closed
 }
+
+//
 
 //关闭
 func (this *Session) Close() {
-	if this.IsClosed() {
-		log.Debug("session is closed")
+	if atomic.LoadInt32(&this.clostep) == closed {
+		log.Debug("session is clostep")
 		return
 	}
-	atomic.StoreInt32(&this.closed, 1)
+	atomic.StoreInt32(&this.clostep, closed)
 	log.Debug("session closing channel")
 	this.channel.Close()
-	log.Debug("session is closed")
+	log.Debug("session is clostep")
 	return
-}
-
-func (this *Session) ResetPingTimer() {
-	if this.IsClosed() {
-		return
-	}
 }
 
 //发送ping消息
@@ -148,12 +188,11 @@ func (this *Session) Connect(msg *packets.ConnectPacket) error {
 }
 
 func (this *Session) RecvMsg(msg packets.ControlPacket) {
-	if this.IsClosed() {
+	if atomic.LoadInt32(&this.clostep) > 0 {
 		log.Debug("RecvMsg session is cloed")
 		return
 	}
 	this.procFrontRemoteMsg(msg)
-
 }
 
 //处理从远端接收到的消息
@@ -161,7 +200,6 @@ func (this *Session) procFrontRemoteMsg(msg packets.ControlPacket) (err error) {
 
 	log.Debugf("procFrontRemoteMsg msg :", msg.String())
 
-	this.ResetPingTimer()
 	switch msg.(type) {
 	case *packets.ConnectPacket:
 		err = this.onConnect(msg.(*packets.ConnectPacket))
@@ -195,7 +233,7 @@ func (this *Session) procFrontRemoteMsg(msg packets.ControlPacket) (err error) {
 		} else {
 			//如果channel的远程断开，则channel发一个nil给session以示退出
 			//告诉sessionMgr关闭本session
-			this.mgr.OnDisconnected(this)
+			this.mgrOnDisconnected()
 		}
 
 	}
@@ -226,17 +264,196 @@ func (this *Session) onConnectTimeout() {
 	if !this.isServer {
 		//作为客户端时
 	}
-	atomic.StoreInt32(&this.closed, 1)
+	atomic.StoreInt32(&this.clostep, 1)
 	atomic.StoreInt32(&this.connected, 0)
 }
 
 func (this *Session) OnChannelError(err error) {
 	if this.IsConnected() {
 		log.Debug("OnChannelError.mgr.OnDisconnected")
-		this.mgr.OnDisconnected(this)
+		this.mgrOnDisconnected()
 	} else {
 		log.Debug("OnChannelError.mgr.OnConnectTimeout")
-		this.mgr.OnConnectTimeout(this)
+		this.mgrOnConnectTimeout()
 	}
 
+}
+
+//定时被调用，用于检查各种超时
+func (this *Session) OnTick() {
+	if atomic.LoadInt32(&this.clostep) > 0 {
+		return
+	}
+	now := time.Now().UnixNano()
+
+	//服务端判断ping有没有超时
+	if now >= atomic.LoadInt64(&this.timeout) {
+
+		//接入PINGREQ超时，直接断开连接
+		if this.IsConnected() {
+			this.mgrOnDisconnected()
+		} else {
+			this.mgrOnConnectTimeout()
+		}
+		log.Debug("ping timeout")
+	}
+	//检测有没有要生发的消息
+	this.checkInflightList()
+}
+
+func (this *Session) mgrOnDisconnected() {
+	if atomic.LoadInt32(&this.clostep) > 0 {
+		return
+	}
+	atomic.StoreInt32(&this.clostep, closing)
+	this.mgr.OnDisconnected(this)
+}
+func (this *Session) mgrOnConnectTimeout() {
+	if atomic.LoadInt32(&this.clostep) > 0 {
+		return
+	}
+	atomic.StoreInt32(&this.clostep, closing)
+	this.mgr.OnConnectTimeout(this)
+}
+
+func (this *Session) removeInflightMsg(msgId uint16, msgtype int) {
+	this.inflightingList.Lock()
+	defer this.inflightingList.Unlock()
+	for f := this.inflightingList.Front(); f != nil; f = f.Next() {
+		imsg := f.Value.(*inflightingMsg)
+		if imsg.msg.Details().MessageID == msgId && imsg.msgType == msgtype {
+			f = this.inflightingList.DangerRemove(f)
+		}
+	}
+}
+
+//检测重发队列是否有超时的消息
+func (this *Session) checkInflightList() {
+	if this.inflightingList.Len() == 0 {
+		return
+	}
+	now := time.Now().UnixNano()
+	this.inflightingList.Lock()
+	defer this.inflightingList.Unlock()
+	for f := this.inflightingList.Front(); f != nil; f = f.Next() {
+		imsg := f.Value.(*inflightingMsg)
+		if imsg.timeout <= now {
+			//超时，需要重发
+			imsg.retryCnt++
+			imsg.timeout = now + config.SentTimeout
+			this.channel.Resend(imsg.msg)
+		}
+	}
+}
+
+//channel调用conn读返回后的回调函数
+//可能是timeout
+//此函数不能阻塞，要尽快返回
+func (this *Session) onChannelReaded(msg packets.ControlPacket, err error) {
+	if atomic.LoadInt32(&this.clostep) > 0 {
+		return
+	}
+	if err == nil {
+		switch msg.(type) {
+		case *packets.ConnectPacket:
+			dashboard.Overview.ConnectRecvCnt.Add(1)
+		case *packets.ConnackPacket:
+			dashboard.Overview.ConnackRecvCnt.Add(1)
+		case *packets.PublishPacket:
+			dashboard.Overview.PublishRecvCnt.Add(1)
+		case *packets.PubackPacket:
+			dashboard.Overview.PubackRecvCnt.Add(1)
+		case *packets.PubrecPacket:
+			dashboard.Overview.PubrecRecvCnt.Add(1)
+		case *packets.PubrelPacket:
+			dashboard.Overview.PubrelRecvCnt.Add(1)
+		case *packets.PubcompPacket:
+			dashboard.Overview.PubcompRecvCnt.Add(1)
+		case *packets.SubscribePacket:
+			dashboard.Overview.SubscribeRecvCnt.Add(1)
+		case *packets.SubackPacket:
+			dashboard.Overview.SubackRecvCnt.Add(1)
+		case *packets.UnsubscribePacket:
+			dashboard.Overview.UnsubscribeRecvCnt.Add(1)
+		case *packets.UnsubackPacket:
+			dashboard.Overview.UnsubackRecvCnt.Add(1)
+		case *packets.PingreqPacket:
+			dashboard.Overview.PingreqRecvCnt.Add(1)
+		case *packets.PingrespPacket:
+			dashboard.Overview.PingrespRecvCnt.Add(1)
+		case *packets.DisconnectPacket:
+			dashboard.Overview.DisconectRecvCnt.Add(1)
+		}
+		//服务端判断ping有没有超时
+		if this.isServer {
+			if this.IsConnected() {
+				atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.PingTimeout)
+			} else {
+				atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.ConnectTimeout)
+			}
+
+		} else {
+			//客户端判断接收PINGRESP超时
+			atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.PingrespTimeout)
+		}
+
+	}
+
+}
+
+//channel调用conn写返回后的回调函数
+//可能是timeout
+//不能在此函数里调用channel.Send,否则会死锁
+//需要重发包可以通过调用channel.Resend
+func (this *Session) onChannelWrited(msg packets.ControlPacket, err error) {
+	if atomic.LoadInt32(&this.clostep) > 0 {
+		return
+	}
+
+	if err == nil {
+		switch msg.(type) {
+		case *packets.ConnectPacket:
+			dashboard.Overview.ConnectSentCnt.Add(1)
+		case *packets.ConnackPacket:
+			dashboard.Overview.ConnackSentCnt.Add(1)
+		case *packets.PublishPacket:
+			dashboard.Overview.PublishSentCnt.Add(1)
+		case *packets.PubackPacket:
+			dashboard.Overview.PubackSentCnt.Add(1)
+		case *packets.PubrecPacket:
+			dashboard.Overview.PubrecSentCnt.Add(1)
+		case *packets.PubrelPacket:
+			dashboard.Overview.PubrelSentCnt.Add(1)
+		case *packets.PubcompPacket:
+			dashboard.Overview.PubcompSentCnt.Add(1)
+		case *packets.SubscribePacket:
+			dashboard.Overview.SubscribeSentCnt.Add(1)
+		case *packets.SubackPacket:
+			dashboard.Overview.SubackSentCnt.Add(1)
+		case *packets.UnsubscribePacket:
+			dashboard.Overview.UnsubscribeSentCnt.Add(1)
+		case *packets.UnsubackPacket:
+			dashboard.Overview.UnsubackSentCnt.Add(1)
+		case *packets.PingreqPacket:
+			dashboard.Overview.PingreqSentCnt.Add(1)
+		case *packets.PingrespPacket:
+			dashboard.Overview.PingrespSentCnt.Add(1)
+		case *packets.DisconnectPacket:
+			dashboard.Overview.DisconectSentCnt.Add(1)
+		}
+		//服务端判断ping有没有超时
+		if this.isServer {
+			if this.IsConnected() {
+				atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.PingTimeout)
+			} else {
+				atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.ConnectTimeout)
+			}
+
+		} else {
+			//客户端判断接收PINGRESP超时
+			atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.PingrespTimeout)
+		}
+
+	}
+	this.checkInflightList()
 }

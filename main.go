@@ -44,6 +44,9 @@ func mqttServer(r *runtine.SafeRuntine, args ...interface{}) {
 	if err != nil {
 		panic(err)
 	}
+	if len(dashboard.Overview.BrokerAddress) == 0 {
+		dashboard.Overview.BrokerAddress = l.Addr().String()
+	}
 	listenNewChan <- l
 	for {
 		c, err := l.Accept()

@@ -10,6 +10,8 @@ import (
 	"github.com/iotalking/mqtt-broker/config"
 	"github.com/iotalking/mqtt-broker/dashboard"
 	"github.com/iotalking/mqtt-broker/safe-runtine"
+
+	"github.com/iotalking/mqtt-broker/utils"
 )
 
 type SentChan chan *SendData
@@ -20,10 +22,6 @@ type SendData struct {
 	Result chan<- error
 }
 
-type MsgReceiver interface {
-	RecvMsg(packets.ControlPacket)
-	OnChannelError(error)
-}
 type Channel struct {
 	//>0为已经退出
 	isStoped int32
@@ -33,8 +31,11 @@ type Channel struct {
 	//接入从调用者写入的消息
 	sendChan chan packets.ControlPacket
 
+	//需要重发的消息
+	resendList *utils.List
+
 	//写入从net.Conn里接入到的消息
-	msgReceiver MsgReceiver
+	session *Session
 	//错误chan
 	errChn      chan error
 	recvRuntine *runtine.SafeRuntine
@@ -46,12 +47,13 @@ type Channel struct {
 
 //New 创建通道
 //通过网络层接口进行数据通讯
-func NewChannel(c net.Conn, msgReceiver MsgReceiver) *Channel {
+func NewChannel(c net.Conn, session *Session) *Channel {
 	var channel = &Channel{
-		conn:        c,
-		sendChan:    make(chan packets.ControlPacket, config.MaxSizeOfSendChannel),
-		msgReceiver: msgReceiver,
-		errChn:      make(chan error),
+		conn:       c,
+		sendChan:   make(chan packets.ControlPacket, config.MaxSizeOfSendChannel),
+		session:    session,
+		errChn:     make(chan error),
+		resendList: utils.NewList(),
 	}
 	channel.recvRuntine = runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
 		channel.recvRuntine = r
@@ -80,15 +82,16 @@ func (this *Channel) Write(p []byte) (n int, err error) {
 //从net.Conn里流式解包消息
 func (this *Channel) recvRun() {
 	for {
-
 		msg, err := packets.ReadPacket(this)
 
+		//回调session，可用于检查有没有connect连时,或者ping超时
+		this.session.onChannelReaded(msg, err)
 		if err == nil {
-			this.msgReceiver.RecvMsg(msg)
+			this.session.RecvMsg(msg)
 			dashboard.Overview.RecvMsgCnt.Add(1)
 			log.Debug("channel recv a msg:", msg.String())
 		} else {
-			this.msgReceiver.OnChannelError(err)
+			this.session.OnChannelError(err)
 			log.Error("recvRun error:", err)
 			break
 		}
@@ -102,7 +105,7 @@ func (this *Channel) sendRun() {
 	defer func() {
 		atomic.StoreInt32(&this.isStoped, 1)
 		close(this.sendChan)
-		log.Error("Channel sendChan has closed")
+		log.Debug("Channel sendChan has closed")
 	}()
 	for {
 		select {
@@ -111,20 +114,39 @@ func (this *Channel) sendRun() {
 			//要求安全退出
 			log.Debugln("recvRun IsInterrupt has closed:")
 			return
-		case msg := <-this.sendChan:
-			//处理上层的消息
-			err := msg.Write(this)
-			//如果写失败，则退出runtine
+		case <-this.resendList.Wait():
+			msg := this.resendList.Pop().(packets.ControlPacket)
+			err := this.writeMsg(msg)
 			if err != nil {
-				log.Error("sendRun write msg to conn error", err)
-				dashboard.Overview.SentErrClientCnt.Add(1)
 				return
 			}
-
-			dashboard.Overview.SentMsgCnt.Add(1)
+		case msg := <-this.sendChan:
+			err := this.writeMsg(msg)
+			if err != nil {
+				return
+			}
 		}
 	}
-	log.Debug("channel recvRun exited")
+
+}
+func (this *Channel) writeMsg(msg packets.ControlPacket) (err error) {
+	//处理上层的消息
+	err = msg.Write(this)
+	//回调session,用于检查有没有要重发的消息，ping超时等
+	this.session.onChannelWrited(msg, err)
+	//如果写失败，则退出runtine
+	if err != nil {
+		if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
+			log.Debug("channel write timeout")
+			return
+		}
+		log.Error("sendRun write msg to conn error", err)
+		dashboard.Overview.SentErrClientCnt.Add(1)
+		return
+	}
+
+	dashboard.Overview.SentMsgCnt.Add(1)
+	return
 }
 
 //Send 将消息写入发送channel
@@ -152,6 +174,12 @@ func (this *Channel) Send(msg packets.ControlPacket) (err error) {
 		this.sendChan <- msg
 	}
 	return
+}
+
+//重发消息，如PUBLISH,PUBACK,PUBREL,PUBREC,PUBCOMP
+//把包推到队列里
+func (this *Channel) Resend(msg packets.ControlPacket) {
+	this.resendList.Push(msg)
 }
 
 //安全退出

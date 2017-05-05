@@ -4,13 +4,18 @@ import (
 	"time"
 
 	"github.com/iotalking/mqtt-broker/safe-runtine"
+	"github.com/iotalking/mqtt-broker/utils"
 )
 
 type OverviewData struct {
 	//总运行时间(纳秒)
 	RunNanoSeconds AtmI64
+	RunTimeString  string
 
-	RunTimeString string
+	//服务器的唯一标识
+	BrokerId string
+	//服务器的网络地址
+	BrokerAddress string
 
 	//总接入消息数
 	RecvMsgCnt AtmI64
@@ -24,6 +29,10 @@ type OverviewData struct {
 	//总发送消息数
 	SentMsgCnt AtmI64
 
+	//每秒接入消息数
+	RecvBytesPerSeconds AtmI64
+	//每秒发送消息数
+	SentBytesPerSeconds AtmI64
 	//每秒接入消息数
 	RecvMsgPerSeconds AtmI64
 	//每秒发送消息数
@@ -77,6 +86,38 @@ type OverviewData struct {
 	//正在关闭的文件句柄数
 	ClosingFiles AtmI64
 
+	//各类消息数
+	ConnectSentCnt     AtmI64
+	ConnackSentCnt     AtmI64
+	PublishSentCnt     AtmI64
+	PubackSentCnt      AtmI64
+	PubrecSentCnt      AtmI64
+	PubrelSentCnt      AtmI64
+	PubcompSentCnt     AtmI64
+	SubscribeSentCnt   AtmI64
+	SubackSentCnt      AtmI64
+	UnsubscribeSentCnt AtmI64
+	UnsubackSentCnt    AtmI64
+	PingreqSentCnt     AtmI64
+	PingrespSentCnt    AtmI64
+	DisconectSentCnt   AtmI64
+
+	ConnectRecvCnt     AtmI64
+	ConnackRecvCnt     AtmI64
+	PublishRecvCnt     AtmI64
+	PubackRecvCnt      AtmI64
+	PubrecRecvCnt      AtmI64
+	PubrelRecvCnt      AtmI64
+	PubcompRecvCnt     AtmI64
+	SubscribeRecvCnt   AtmI64
+	SubackRecvCnt      AtmI64
+	UnsubscribeRecvCnt AtmI64
+	UnsubackRecvCnt    AtmI64
+	PingreqRecvCnt     AtmI64
+	PingrespRecvCnt    AtmI64
+	DisconectRecvCnt   AtmI64
+
+	//私有成员
 	runtine *runtine.SafeRuntine
 
 	getChan chan byte
@@ -89,4 +130,5 @@ var startTime time.Time
 
 func init() {
 	startTime = time.Now()
+	Overview.BrokerId = utils.LocalId()
 }

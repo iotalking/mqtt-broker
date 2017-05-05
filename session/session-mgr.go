@@ -3,6 +3,7 @@ package session
 import (
 	"net"
 	"sync"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 
@@ -42,8 +43,13 @@ type SessionMgr struct {
 	getActiveSessionsChan       chan byte
 	getActiveSessionsResultChan chan []*Session
 
+	getAllSessionChan       chan byte
+	getAllSessionResultChan chan []*Session
+
 	closeSessionRuntine *runtine.SafeRuntine
 	closeSessionChan    chan *Session
+
+	tickerRuntine *runtine.SafeRuntine
 }
 
 var sessionMgr *SessionMgr
@@ -63,6 +69,8 @@ func GetMgr() *SessionMgr {
 			getSessionsResultChan:       make(chan dashboard.SessionList),
 			getActiveSessionsChan:       make(chan byte),
 			getActiveSessionsResultChan: make(chan []*Session),
+			getAllSessionChan:           make(chan byte),
+			getAllSessionResultChan:     make(chan []*Session),
 			closeSessionChan:            make(chan *Session),
 		}
 		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
@@ -87,6 +95,10 @@ func GetMgr() *SessionMgr {
 			}
 			log.Info("closeSessionRuntine is closed")
 		})
+		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
+			mgr.tickerRuntine = r
+			mgr.tickerRun()
+		})
 		sessionMgr = mgr
 
 	})
@@ -99,6 +111,7 @@ func (this *SessionMgr) Close() {
 		log.Warnf("Close:sessionMgr istoped")
 		return
 	}
+	this.tickerRuntine.Stop()
 	this.closeSessionRuntine.Stop()
 	this.runtine.Stop()
 }
@@ -115,12 +128,32 @@ func (this *SessionMgr) HandleConnection(c net.Conn) {
 
 	this.newConnChan <- c
 }
+func (this *SessionMgr) tickerRun() {
+	var secondTicker = time.NewTimer(time.Second)
+	for {
+		select {
+		case <-secondTicker.C:
+			preTime := time.Now()
+			asessions := this.getAllSesssions()
 
+			for _, s := range asessions {
+				s.OnTick()
+			}
+
+			usedNs := time.Now().Sub(preTime).Nanoseconds()
+			d := time.Second - time.Duration(usedNs)
+			log.Info("ontick used:", usedNs)
+			secondTicker.Reset(d)
+		}
+
+	}
+}
 func (this *SessionMgr) run() {
 	for {
 		select {
 		case <-this.runtine.IsInterrupt:
 			break
+
 		case c := <-this.newConnChan:
 			log.Debugf("newConnChan got a conn.%s", c.RemoteAddr().String())
 			session := NewSession(this, c, true)
@@ -164,6 +197,15 @@ func (this *SessionMgr) run() {
 				sessions = append(sessions, s)
 			}
 			this.getActiveSessionsResultChan <- sessions
+		case <-this.getAllSessionChan:
+			sessions := make([]*Session, 0, len(this.connectedSessionMap))
+			for _, s := range this.waitingConnectSessionMap {
+				sessions = append(sessions, s)
+			}
+			for _, s := range this.connectedSessionMap {
+				sessions = append(sessions, s)
+			}
+			this.getAllSessionResultChan <- sessions
 		}
 	}
 }
@@ -207,4 +249,9 @@ func (this *SessionMgr) GetSessions() dashboard.SessionList {
 func (this *SessionMgr) getActiveSessions() []*Session {
 	this.getActiveSessionsChan <- 1
 	return <-this.getActiveSessionsResultChan
+}
+
+func (this *SessionMgr) getAllSesssions() []*Session {
+	this.getAllSessionChan <- 1
+	return <-this.getAllSessionResultChan
 }

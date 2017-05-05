@@ -36,13 +36,25 @@ func run() {
 	var perCnt AtmI64
 	var spsTotall AtmI64
 	var rpsTotall AtmI64
+
+	var lastSentBytes = Overview.SentBytes
+	var lastRecvBytes = Overview.RecvBytes
+	//平均发送速率总和
+	var sbpsTotall AtmI64
+	//平均接收速率总和
+	var rbpsTotall AtmI64
 	for {
 		select {
 		case <-_secondsTimer.C:
 			//每秒计算一次平均数
-			tm := time.Now().Sub(lastPerTime)
-			sps := (Overview.SentMsgCnt - lastSentMsgCnt) / AtmI64(tm.Seconds())
-			rps := (Overview.RecvMsgCnt - lastRecvMsgCnt) / AtmI64(tm.Seconds())
+			tm := time.Now().Sub(lastPerTime).Seconds()
+
+			sps := (Overview.SentMsgCnt - lastSentMsgCnt) / AtmI64(tm)
+			rps := (Overview.RecvMsgCnt - lastRecvMsgCnt) / AtmI64(tm)
+
+			sbps := (Overview.SentBytes - lastSentBytes) / AtmI64(tm)
+			rbps := (Overview.RecvBytes - lastRecvBytes) / AtmI64(tm)
+
 			perCnt++
 			if sps > 0 {
 				spsTotall += sps
@@ -52,10 +64,21 @@ func run() {
 				rpsTotall += rps
 				Overview.RecvMsgPerSeconds.Set(int64(rpsTotall / perCnt))
 			}
-
+			if sbps > 0 {
+				sbpsTotall += sbps
+				Overview.SentBytesPerSeconds.Set(int64(rpsTotall / perCnt))
+			}
+			if rbps > 0 {
+				rbpsTotall += rbps
+				Overview.RecvBytesPerSeconds.Set(int64(rpsTotall / perCnt))
+			}
 			lastPerTime = time.Now()
 			lastSentMsgCnt = Overview.SentMsgCnt
 			lastRecvMsgCnt = Overview.RecvMsgCnt
+
+			lastSentBytes = Overview.SentBytes
+			lastRecvBytes = Overview.RecvBytes
+
 			_secondsTimer.Reset(duration)
 		case <-Overview.getChan:
 			log.Debug("geting overview data")

@@ -48,6 +48,24 @@ func (this *List) Len() int {
 	return this.l.Len()
 }
 
+func (this *List) Front() *list.Element {
+	this.mux.Lock()
+	defer this.mux.Unlock()
+	return this.l.Front()
+}
+
+//此函数是非线程安全的
+func (this *List) DangerRemove(e *list.Element) *list.Element {
+	n := e.Next()
+	this.l.Remove(e)
+	return n
+}
+func (this *List) Lock() {
+	this.mux.Lock()
+}
+func (this *List) Unlock() {
+	this.mux.Unlock()
+}
 func (this *List) Wait() <-chan byte {
 	return this.ch
 }

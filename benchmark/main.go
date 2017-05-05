@@ -15,17 +15,16 @@
 package main
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"os/signal"
 	"time"
 
 	"github.com/eclipse/paho.mqtt.golang"
+
+	"github.com/iotalking/mqtt-broker/utils"
 )
 
 var f mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
@@ -36,16 +35,11 @@ var f mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
 var clients []mqtt.Client
 var newClientChan = make(chan mqtt.Client)
 var closeAll = make(chan bool)
-var localId string
 
-func newClientId() string {
-	sum := md5.Sum([]byte(fmt.Sprintf("%s%d", localId, time.Now().UnixNano())))
-	return hex.EncodeToString(sum[:])
-}
 func push(host string, port int, i int) {
 	//	mqtt.DEBUG = log.New(os.Stdout, "", 0)
 	mqtt.ERROR = log.New(os.Stdout, "", 0)
-	opts := mqtt.NewClientOptions().AddBroker("tcp://" + host + fmt.Sprintf(":%d", port)).SetClientID(newClientId())
+	opts := mqtt.NewClientOptions().AddBroker("tcp://" + host + fmt.Sprintf(":%d", port)).SetClientID(utils.NewId())
 	opts.SetKeepAlive(20 * time.Second)
 	opts.SetDefaultPublishHandler(f)
 	opts.SetPingTimeout(10 * time.Second)
@@ -70,7 +64,7 @@ func push(host string, port int, i int) {
 func subscribe(host string, port int, i int, resultCh chan<- bool) {
 	//	mqtt.DEBUG = log.New(os.Stdout, "", 0)
 	mqtt.ERROR = log.New(os.Stdout, "", 0)
-	opts := mqtt.NewClientOptions().AddBroker("tcp://" + host + fmt.Sprintf(":%d", port)).SetClientID(newClientId())
+	opts := mqtt.NewClientOptions().AddBroker("tcp://" + host + fmt.Sprintf(":%d", port)).SetClientID(utils.NewId())
 	opts.SetConnectTimeout(100 * time.Second)
 
 	opts.SetKeepAlive(20 * time.Second)
@@ -97,19 +91,6 @@ func main() {
 	port := flag.Int("port", 1883, "server port")
 	p := flag.Int("p", 1, "count process")
 	flag.Parse()
-
-	netifs, err := net.Interfaces()
-	md5hash := md5.New()
-	if err != nil {
-		panic(err)
-	}
-	for _, nif := range netifs {
-		mac := nif.HardwareAddr.String()
-		log.Printf("%s\n", mac)
-		md5hash.Write([]byte(mac))
-	}
-	localId = hex.EncodeToString(md5hash.Sum(nil))
-	log.Printf("localId:%s\n", localId)
 
 	var i int
 	defer func() {

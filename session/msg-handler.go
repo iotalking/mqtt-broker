@@ -36,6 +36,7 @@ func (this *Session) onConnack(msg *packets.ConnackPacket) error {
 	//如果是客户端要启动pingTimer定时器，定时发送定时包
 	//同时启动pingrespTimer定时器，检测服务器返回PINGRESP包有没有超时
 	//如果客户pingrespTimer时间内没有收到PINGRESP，则断开连接
+
 	return nil
 }
 
@@ -61,12 +62,22 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 //处理 PUBACK 消息
 //向qos=1的主题消息发布者应答
 func (this *Session) onPuback(msg *packets.PubackPacket) error {
+
+	this.removeInflightMsg(msg.Details().MessageID, packets.Publish)
+
 	return nil
 }
 
 //处理 PUBREC 消息
 //向qos=2的主题消息发布者应答第一步
 func (this *Session) onPubrec(msg *packets.PubrecPacket) error {
+	if msg.Qos != 2 {
+		return packets.ConnErrors[packets.ErrRefusedIDRejected]
+	}
+	this.removeInflightMsg(msg.Details().MessageID, packets.Publish)
+	relmsg := packets.NewControlPacket(packets.Pubrel).(*packets.PubrelPacket)
+	relmsg.MessageID = msg.MessageID
+	this.Send(relmsg)
 	return nil
 }
 
@@ -74,6 +85,10 @@ func (this *Session) onPubrec(msg *packets.PubrecPacket) error {
 //向qos=2的主题消息发布者应答服务器第二步
 //对PUBREC的响应
 func (this *Session) onPubrel(msg *packets.PubrelPacket) error {
+	this.removeInflightMsg(msg.Details().MessageID, packets.Pubrec)
+	compmsg := packets.NewControlPacket(packets.Pubcomp).(*packets.PubcompPacket)
+	compmsg.MessageID = msg.MessageID
+	this.Send(compmsg)
 	return nil
 }
 
@@ -82,6 +97,7 @@ func (this *Session) onPubrel(msg *packets.PubrelPacket) error {
 //对PUBREL的响应
 //它是QoS 2等级协议交换的第四个也是最后一个报文
 func (this *Session) onPubcomp(msg *packets.PubcompPacket) error {
+	this.removeInflightMsg(msg.Details().MessageID, packets.Pubrel)
 	return nil
 }
 
@@ -135,7 +151,7 @@ func (this *Session) onPingresp(msg *packets.PingrespPacket) error {
 //断开网络
 func (this *Session) onDisconnect(msg *packets.DisconnectPacket) error {
 	log.Debugf("session(%s) onDisconnect", this.clientId, this.sentMsgChan)
-	this.mgr.OnDisconnected(this)
+	this.mgrOnDisconnected()
 
 	log.Debugf("session(%s) onDisconnect end", this.clientId)
 	return nil
