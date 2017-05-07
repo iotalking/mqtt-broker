@@ -13,6 +13,11 @@ import (
 //处理 CONNECT 消息
 //连接消息
 func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
+	//如果已经连接，则是违规，应该断开
+	if this.IsConnected() {
+		log.Info("connected client dup CONNECT")
+		return packets.ConnErrors[packets.ErrRefusedServerUnavailable]
+	}
 	this.clientId = msg.ClientIdentifier
 
 	conack := packets.NewControlPacket(packets.Connack).(*packets.ConnackPacket)
