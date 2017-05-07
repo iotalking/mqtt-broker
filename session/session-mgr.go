@@ -29,6 +29,9 @@ type SessionMgr struct {
 	//已经连接难的session主动断开连接
 	disconnectChan chan *Session
 
+	//断开指定clientId的session
+	disconnectSessionByClientIdChan chan string
+
 	//保存未验证连接的session
 	waitingConnectSessionMap map[net.Conn]*Session
 
@@ -61,21 +64,22 @@ var sessionMgrOnce sync.Once
 func GetMgr() *SessionMgr {
 	sessionMgrOnce.Do(func() {
 		mgr := &SessionMgr{
-			connectedSessionMap:         make(map[string]*Session),
-			newConnChan:                 make(chan net.Conn),
-			subscriptionMgr:             topic.NewSubscriptionMgr(),
-			connectTimeoutChan:          make(chan *Session),
-			connectedChan:               make(chan *Session),
-			disconnectChan:              make(chan *Session),
-			waitingConnectSessionMap:    make(map[net.Conn]*Session),
-			getSessionsChan:             make(chan byte),
-			getSessionsResultChan:       make(chan dashboard.SessionList),
-			getActiveSessionsChan:       make(chan byte),
-			getActiveSessionsResultChan: make(chan []*Session),
-			getAllSessionChan:           make(chan byte),
-			getAllSessionResultChan:     make(chan []*Session),
-			closeSessionChan:            make(chan *Session),
-			storeMgr:                    store.NewStoreMgr(),
+			connectedSessionMap:             make(map[string]*Session),
+			newConnChan:                     make(chan net.Conn),
+			subscriptionMgr:                 topic.NewSubscriptionMgr(),
+			connectTimeoutChan:              make(chan *Session),
+			connectedChan:                   make(chan *Session),
+			disconnectSessionByClientIdChan: make(chan string),
+			disconnectChan:                  make(chan *Session),
+			waitingConnectSessionMap:        make(map[net.Conn]*Session),
+			getSessionsChan:                 make(chan byte),
+			getSessionsResultChan:           make(chan dashboard.SessionList),
+			getActiveSessionsChan:           make(chan byte),
+			getActiveSessionsResultChan:     make(chan []*Session),
+			getAllSessionChan:               make(chan byte),
+			getAllSessionResultChan:         make(chan []*Session),
+			closeSessionChan:                make(chan *Session),
+			storeMgr:                        store.NewStoreMgr(),
 		}
 		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
 			mgr.runtine = r
@@ -180,12 +184,24 @@ func (this *SessionMgr) run() {
 			if dashboard.Overview.ActiveClients.Get() > dashboard.Overview.MaxActiveClinets.Get() {
 				dashboard.Overview.MaxActiveClinets.Set(dashboard.Overview.ActiveClients.Get())
 			}
+		case clientId := <-this.disconnectSessionByClientIdChan:
+			if s, ok := this.connectedSessionMap[clientId]; ok {
+				log.Info("sessionMgr disconnectSessionByClientId:", clientId)
+				delete(this.connectedSessionMap, clientId)
+				//由session mgr来安全退出session,因为是由mgr创建的
+				dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
+				this.CloseSession(s)
+			}
+
 		case s := <-this.disconnectChan:
-			log.Info("sessionMgr disconnet client:", s.clientId)
-			delete(this.connectedSessionMap, s.clientId)
-			//由session mgr来安全退出session,因为是由mgr创建的
-			dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
-			this.CloseSession(s)
+			if _, ok := this.connectedSessionMap[s.clientId]; ok {
+				log.Info("sessionMgr disconnet client:", s.clientId)
+				delete(this.connectedSessionMap, s.clientId)
+				//由session mgr来安全退出session,因为是由mgr创建的
+				dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
+				this.CloseSession(s)
+			}
+
 		case <-this.getSessionsChan:
 			log.Debug("sessionMgr.getSessionsChan")
 			list := dashboard.SessionList{}
@@ -232,6 +248,10 @@ func (this *SessionMgr) OnConnected(session *Session) {
 
 }
 
+//断开指定clientId的session
+func (this *SessionMgr) DisconectSessionByClientId(clientId string) {
+	this.disconnectSessionByClientIdChan <- clientId
+}
 func (this *SessionMgr) OnDisconnected(session *Session) {
 	//不能阻塞session，不然会死锁
 	this.disconnectChan <- session

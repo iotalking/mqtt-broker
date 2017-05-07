@@ -23,7 +23,9 @@ func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 		log.Error("client ReservedBit != 0")
 		return packets.ConnErrors[packets.ErrProtocolViolation]
 	}
+	//检查是否有相同clientId的连接，如果有，则要断开原有连接
 	this.clientId = msg.ClientIdentifier
+	this.mgr.DisconectSessionByClientId(this.clientId)
 
 	conack := packets.NewControlPacket(packets.Connack).(*packets.ConnackPacket)
 	conack.ReturnCode = packets.Accepted
