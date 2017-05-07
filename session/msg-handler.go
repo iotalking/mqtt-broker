@@ -15,8 +15,13 @@ import (
 func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 	//如果已经连接，则是违规，应该断开
 	if this.IsConnected() {
-		log.Info("connected client dup CONNECT")
-		return packets.ConnErrors[packets.ErrRefusedServerUnavailable]
+		log.Error("connected client dup CONNECT")
+		return packets.ConnErrors[packets.ErrProtocolViolation]
+	}
+	//判断保留标志位是否为0,如果不为0，返回协议错误
+	if msg.ReservedBit&0x1 == 0x1 {
+		log.Error("client ReservedBit != 0")
+		return packets.ConnErrors[packets.ErrProtocolViolation]
 	}
 	this.clientId = msg.ClientIdentifier
 
