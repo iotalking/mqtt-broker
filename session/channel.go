@@ -124,6 +124,7 @@ func (this *Channel) sendRun() {
 				return
 			}
 		case msg := <-this.sendChan:
+			log.Debug("sending msg:", msg)
 			err := this.writeMsg(msg)
 			if err != nil {
 				return

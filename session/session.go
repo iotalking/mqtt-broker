@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -73,7 +74,11 @@ type Session struct {
 	timeout int64
 
 	//发送中的消息，超时需要重发
+	//TODO 用msgId做为Map存储inflighting消息，可以优先内存以避免反复分配
 	inflightingList *utils.List
+
+	onMessage func(*packets.PublishPacket)
+	mtxOnMsg  sync.Mutex
 }
 
 //使用Session的一方调用Publish函数时，通过publishChan给Session传消息用
@@ -113,14 +118,33 @@ func NewSession(mgr *SessionMgr, conn net.Conn, isServer bool) *Session {
 	return s
 }
 
+func (this *Session) RegisterOnMessage(cb func(*packets.PublishPacket)) {
+	this.mtxOnMsg.Lock()
+	defer this.mtxOnMsg.Unlock()
+	this.onMessage = cb
+}
+func (this *Session) callbackOnMessage(msg *packets.PublishPacket) {
+	this.mtxOnMsg.Lock()
+	onMsg := this.onMessage
+	this.mtxOnMsg.Unlock()
+
+	if onMsg != nil {
+		onMsg(msg)
+	}
+}
+
 func (this *Session) Send(msg packets.ControlPacket) (err error) {
 	if this.channel.IsStop() {
-		return errors.New("channel is clostep")
+		return errors.New("%s channel is stoped")
 	}
 	var msgtype int
+
 	switch msg.(type) {
 	case *packets.PublishPacket:
-		msgtype = packets.Publish
+		if msg.Details().Qos > 0 {
+			msgtype = packets.Publish
+		}
+
 	case *packets.PubrecPacket:
 		msgtype = packets.Pubrec
 	case *packets.PubrelPacket:
@@ -128,11 +152,12 @@ func (this *Session) Send(msg packets.ControlPacket) (err error) {
 
 	}
 	if msgtype > 0 {
-		this.inflightingList.Push(&inflightingMsg{
+		imsg := &inflightingMsg{
 			msg:     msg,
 			msgType: msgtype,
 			timeout: time.Now().UnixNano() + config.SentTimeout,
-		})
+		}
+		this.inflightingList.Push(imsg)
 	}
 	return this.channel.Send(msg)
 }
@@ -305,6 +330,7 @@ func (this *Session) mgrOnDisconnected() {
 	if atomic.LoadInt32(&this.clostep) > 0 {
 		return
 	}
+	this.mgr.subscriptionMgr.RemoveSession(this)
 	atomic.StoreInt32(&this.clostep, closing)
 	this.mgr.OnDisconnected(this)
 }
@@ -312,19 +338,25 @@ func (this *Session) mgrOnConnectTimeout() {
 	if atomic.LoadInt32(&this.clostep) > 0 {
 		return
 	}
+	this.mgr.subscriptionMgr.RemoveSession(this)
 	atomic.StoreInt32(&this.clostep, closing)
 	this.mgr.OnConnectTimeout(this)
 }
 
-func (this *Session) removeInflightMsg(msgId uint16, msgtype int) {
-	this.inflightingList.Lock()
-	defer this.inflightingList.Unlock()
-	for f := this.inflightingList.Front(); f != nil; f = f.Next() {
-		imsg := f.Value.(*inflightingMsg)
+func (this *Session) removeInflightMsg(msgId uint16, msgtype int) (imsg *inflightingMsg) {
+
+	this.inflightingList.Remove(func(v interface{}) (del, c bool) {
+		imsg = v.(*inflightingMsg)
 		if imsg.msg.Details().MessageID == msgId && imsg.msgType == msgtype {
-			f = this.inflightingList.DangerRemove(f)
+			del = true
+			c = true
+			return
 		}
-	}
+		del = false
+		c = true
+		return
+	})
+	return
 }
 
 //检测重发队列是否有超时的消息
@@ -333,16 +365,25 @@ func (this *Session) checkInflightList() {
 		return
 	}
 	now := time.Now().UnixNano()
-	this.inflightingList.Lock()
-	defer this.inflightingList.Unlock()
-	for f := this.inflightingList.Front(); f != nil; f = f.Next() {
-		imsg := f.Value.(*inflightingMsg)
+
+	var tmMsg = make([]*inflightingMsg, 0, this.inflightingList.Len())
+
+	this.inflightingList.Each(func(v interface{}) (stop bool) {
+		imsg := v.(*inflightingMsg)
 		if imsg.timeout <= now {
-			//超时，需要重发
-			imsg.retryCnt++
-			imsg.timeout = now + config.SentTimeout
-			this.channel.Resend(imsg.msg)
+			tmMsg = append(tmMsg, imsg)
 		}
+		return
+	})
+
+	if len(tmMsg) > 0 {
+		log.Debugf("Session[%s] has msg to resend", this.clientId)
+	}
+	for _, imsg := range tmMsg {
+		//超时，需要重发
+		imsg.retryCnt++
+		imsg.timeout = now + config.SentTimeout
+		this.channel.Resend(imsg.msg)
 	}
 }
 

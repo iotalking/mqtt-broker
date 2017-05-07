@@ -16,6 +16,8 @@ import (
 
 	"net/http"
 	_ "net/http/pprof"
+
+	_ "github.com/iotalking/mqtt-broker/store/mem-provider"
 )
 
 func init() {

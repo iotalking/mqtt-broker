@@ -21,24 +21,27 @@ func NewList() *List {
 
 func (this *List) Push(v interface{}) {
 	this.mux.Lock()
-	defer this.mux.Unlock()
 	this.len++
 	this.l.PushBack(v)
+	this.mux.Unlock()
+
 	select {
 	case this.ch <- 0:
 	default:
 	}
 }
 func (this *List) Pop() interface{} {
-	this.mux.Lock()
-	defer this.mux.Unlock()
+
 	if this.l.Len() > 0 {
 		select {
 		case this.ch <- 0:
 		default:
 		}
+		this.mux.Lock()
+		v := this.l.Remove(this.l.Front())
+		this.mux.Unlock()
 
-		return this.l.Remove(this.l.Front())
+		return v
 	}
 	return nil
 }
@@ -54,18 +57,39 @@ func (this *List) Front() *list.Element {
 	return this.l.Front()
 }
 
-//此函数是非线程安全的
-func (this *List) DangerRemove(e *list.Element) *list.Element {
-	n := e.Next()
-	this.l.Remove(e)
-	return n
-}
-func (this *List) Lock() {
+//遍历列表
+//cb返回true时停止遍历，false继续遍历
+func (this *List) Each(cb func(v interface{}) (stop bool)) {
 	this.mux.Lock()
+	defer this.mux.Unlock()
+	for f := this.l.Front(); f != nil; f = f.Next() {
+		stop := cb(f.Value)
+		if stop {
+			break
+		}
+	}
 }
-func (this *List) Unlock() {
-	this.mux.Unlock()
+
+//删除元素
+//cb返回true时删除当前元素
+func (this *List) Remove(cb func(v interface{}) (del, c bool)) {
+	this.mux.Lock()
+	defer this.mux.Unlock()
+	for f := this.l.Front(); f != nil; {
+		del, _continue := cb(f.Value)
+		if del {
+			n := f.Next()
+			this.l.Remove(f)
+			f = n
+			if _continue {
+				continue
+			}
+
+		}
+		f = f.Next()
+	}
 }
+
 func (this *List) Wait() <-chan byte {
 	return this.ch
 }

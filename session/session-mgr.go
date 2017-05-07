@@ -13,6 +13,7 @@ import (
 	"github.com/eclipse/paho.mqtt.golang/packets"
 
 	"github.com/iotalking/mqtt-broker/dashboard"
+	"github.com/iotalking/mqtt-broker/store"
 )
 
 type SessionMgr struct {
@@ -34,7 +35,7 @@ type SessionMgr struct {
 	//保存已经验证连接的session
 	connectedSessionMap map[string]*Session
 
-	subscriptionMgr *topic.SubscriptionMgr
+	subscriptionMgr topic.SubscriptionMgr
 
 	getSessionsChan chan byte
 	//返回json的active session和inactive session的clientId列表
@@ -50,6 +51,8 @@ type SessionMgr struct {
 	closeSessionChan    chan *Session
 
 	tickerRuntine *runtine.SafeRuntine
+
+	storeMgr store.StoreMgr
 }
 
 var sessionMgr *SessionMgr
@@ -72,6 +75,7 @@ func GetMgr() *SessionMgr {
 			getAllSessionChan:           make(chan byte),
 			getAllSessionResultChan:     make(chan []*Session),
 			closeSessionChan:            make(chan *Session),
+			storeMgr:                    store.NewStoreMgr(),
 		}
 		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
 			mgr.runtine = r
@@ -239,14 +243,6 @@ func (this *SessionMgr) OnConnectTimeout(session *Session) {
 	this.connectTimeoutChan <- session
 }
 
-func (this *SessionMgr) OnSubscribe(msg *packets.SubscribePacket, session *Session) {
-
-}
-
-func (this *SessionMgr) OnUnsubscribe(msg *packets.UnsubscribePacket, session *Session) {
-
-}
-
 func (this *SessionMgr) GetSessions() dashboard.SessionList {
 	log.Debug("SessionMgr.GetSessions")
 	this.getSessionsChan <- 1
@@ -261,4 +257,11 @@ func (this *SessionMgr) getActiveSessions() []*Session {
 func (this *SessionMgr) getAllSesssions() []*Session {
 	this.getAllSessionChan <- 1
 	return <-this.getAllSessionResultChan
+}
+
+func (this *SessionMgr) GetSubscriptionMgr() topic.SubscriptionMgr {
+	return this.subscriptionMgr
+}
+func (this *SessionMgr) GetStoreMgr() store.StoreMgr {
+	return this.storeMgr
 }
