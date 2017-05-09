@@ -20,11 +20,22 @@ import (
 	_ "github.com/iotalking/mqtt-broker/store/mem-provider"
 )
 
+type timeFormater struct {
+	log.TextFormatter
+}
+
+func (this timeFormater) Format(e *log.Entry) ([]byte, error) {
+	bs, err := this.TextFormatter.Format(e)
+	bs = []byte(fmt.Sprintf("%d: %s", e.Time.UnixNano(), bs))
+	return bs, err
+}
+
 func init() {
 	//	os.OpenFile("./log.txt", os.O_CREATE|os.O_WRONLY, 666)
 	log.SetOutput(os.Stdout)
 	//	log.SetLevel(log.WarnLevel)
 	log.SetLevel(log.DebugLevel)
+	log.SetFormatter(timeFormater{})
 }
 
 var listenNewChan = make(chan net.Listener)

@@ -200,8 +200,6 @@ func (this *Channel) Close() {
 	this.sendRuntine = nil
 	this.recvRuntine.Stop()
 	this.recvRuntine = nil
-	this.conn = nil
-
 }
 
 func (this *Channel) IsStop() bool {

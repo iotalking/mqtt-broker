@@ -27,6 +27,7 @@ type SafeRuntine struct {
 	stoped int32
 }
 
+//同步启动runtine，直到runtine被执行
 func Go(fn func(r *SafeRuntine, args ...interface{}), args ...interface{}) *SafeRuntine {
 	var o SafeRuntine
 	o.startedWG.Add(1)
@@ -42,6 +43,9 @@ func Go(fn func(r *SafeRuntine, args ...interface{}), args ...interface{}) *Safe
 
 		atomic.StoreInt32(&o.stoped, 0)
 	}(args...)
+
+	//直到runtine执行
+	o.startedWG.Wait()
 
 	return &o
 }
