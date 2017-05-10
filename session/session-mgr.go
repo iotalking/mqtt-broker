@@ -1,7 +1,7 @@
 package session
 
 import (
-	"net"
+	"io"
 	"sync"
 	"time"
 
@@ -21,7 +21,7 @@ type SessionMgr struct {
 	runtine *runtine.SafeRuntine
 
 	//用于处理新连接
-	newConnChan chan net.Conn
+	newConnChan chan io.ReadWriteCloser
 	//连接验证超时
 	connectTimeoutChan chan *Session
 	//连接验证通过
@@ -33,7 +33,7 @@ type SessionMgr struct {
 	disconnectSessionByClientIdChan chan string
 
 	//保存未验证连接的session
-	waitingConnectSessionMap map[net.Conn]*Session
+	waitingConnectSessionMap map[io.ReadWriteCloser]*Session
 
 	//保存已经验证连接的session
 	connectedSessionMap map[string]*Session
@@ -65,13 +65,13 @@ func GetMgr() *SessionMgr {
 	sessionMgrOnce.Do(func() {
 		mgr := &SessionMgr{
 			connectedSessionMap:             make(map[string]*Session),
-			newConnChan:                     make(chan net.Conn),
+			newConnChan:                     make(chan io.ReadWriteCloser),
 			subscriptionMgr:                 topic.NewSubscriptionMgr(),
 			connectTimeoutChan:              make(chan *Session),
 			connectedChan:                   make(chan *Session),
 			disconnectSessionByClientIdChan: make(chan string),
 			disconnectChan:                  make(chan *Session),
-			waitingConnectSessionMap:        make(map[net.Conn]*Session),
+			waitingConnectSessionMap:        make(map[io.ReadWriteCloser]*Session),
 			getSessionsChan:                 make(chan byte),
 			getSessionsResultChan:           make(chan dashboard.SessionList),
 			getActiveSessionsChan:           make(chan byte),
@@ -128,12 +128,13 @@ func (this *SessionMgr) CloseSession(s *Session) {
 	dashboard.Overview.ClosingFiles.Add(1)
 	this.closeSessionChan <- s
 }
-func (this *SessionMgr) HandleConnection(c net.Conn) {
+func (this *SessionMgr) HandleConnection(c io.ReadWriteCloser) {
 	if this.runtine.IsStoped() {
 		log.Warnf("sessionMgr istoped")
 		return
 	}
-
+	dashboard.Overview.InactiveClients.Add(1)
+	dashboard.Overview.OpenedFiles.Add(1)
 	this.newConnChan <- c
 }
 func (this *SessionMgr) tickerRun() {
@@ -167,7 +168,6 @@ func (this *SessionMgr) run() {
 			break
 
 		case c := <-this.newConnChan:
-			log.Debugf("newConnChan got a conn.%s", c.RemoteAddr().String())
 			session := NewSession(this, c, true)
 			this.waitingConnectSessionMap[c] = session
 

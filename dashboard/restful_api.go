@@ -18,6 +18,9 @@ func router() {
 	mux.HandleFunc(config.DashboordApiUrl+"/overview", Overview.Get)
 	mux.HandleFunc(config.DashboordApiUrl+"/log", SetLogLevel)
 	mux.HandleFunc(config.DashboordApiUrl+"/activeSessions", GetSessions)
+
+	mux.HandleFunc(config.DashboordUrl+"/client", svrFile("./dashboard/www/client/index.html"))
+	mux.HandleFunc(config.DashboordUrl+"/client/browserMqtt.js", svrFile("./dashboard/www/client/browserMqtt.js"))
 }
 
 func run() {
@@ -147,4 +150,13 @@ func GetSessions(w http.ResponseWriter, r *http.Request) {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "\t")
 	encoder.Encode(list)
+}
+
+func svrFile(name string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Debugf("srv File:%s", name)
+
+		http.ServeFile(w, r, name)
+	}
+
 }

@@ -2,7 +2,7 @@ package session
 
 import (
 	"errors"
-	"net"
+	"io"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -103,7 +103,7 @@ type sendingData struct {
 
 //创建会话
 //客户端会话和服务端会议的主要区别只是要不要发ping消息
-func NewSession(mgr *SessionMgr, conn net.Conn, isServer bool) *Session {
+func NewSession(mgr *SessionMgr, conn io.ReadWriteCloser, isServer bool) *Session {
 	s := &Session{
 		mgr:             mgr,
 		isServer:        isServer,
@@ -294,6 +294,7 @@ func (this *Session) onConnectTimeout() {
 }
 
 func (this *Session) OnChannelError(err error) {
+	log.Error("OnChannelError:", err)
 	if this.IsConnected() {
 		log.Debug("OnChannelError.mgr.OnDisconnected")
 		this.mgrOnDisconnected()

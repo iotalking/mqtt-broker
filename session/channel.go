@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"io"
 	"net"
 	"sync/atomic"
 
@@ -26,7 +27,7 @@ type Channel struct {
 	//>0为已经退出
 	isStoped int32
 	//下层数据通讯接口
-	conn net.Conn
+	conn io.ReadWriteCloser
 
 	//接入从调用者写入的消息
 	sendChan chan packets.ControlPacket
@@ -47,7 +48,7 @@ type Channel struct {
 
 //New 创建通道
 //通过网络层接口进行数据通讯
-func NewChannel(c net.Conn, session *Session) *Channel {
+func NewChannel(c io.ReadWriteCloser, session *Session) *Channel {
 	var channel = &Channel{
 		conn:       c,
 		sendChan:   make(chan packets.ControlPacket, config.MaxSizeOfSendChannel),

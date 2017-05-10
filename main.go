@@ -11,6 +11,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 
 	"github.com/iotalking/mqtt-broker/dashboard"
+	"github.com/iotalking/mqtt-broker/network/websocket"
 	"github.com/iotalking/mqtt-broker/safe-runtine"
 	"github.com/iotalking/mqtt-broker/session"
 
@@ -78,8 +79,6 @@ func mqttServer(r *runtine.SafeRuntine, args ...interface{}) {
 			if c == nil {
 				panic("Accept conn is nil")
 			}
-			dashboard.Overview.InactiveClients.Add(1)
-			dashboard.Overview.OpenedFiles.Add(1)
 			if dashboard.Overview.OpenedFiles > dashboard.Overview.MaxOpenedFiles {
 				dashboard.Overview.MaxOpenedFiles.Set(int64(dashboard.Overview.OpenedFiles))
 			}
@@ -105,6 +104,13 @@ func main() {
 
 	go func() {
 		log.Println(http.ListenAndServe(":6060", nil))
+	}()
+	go func() {
+		log.Info("starting websocket on :8083")
+		err = websocket.Start(":8083")
+		if err != nil {
+			panic("start websocket error")
+		}
 	}()
 
 	var closeAllListenChan = make(chan bool)
