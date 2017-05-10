@@ -29,7 +29,13 @@ func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 
 	conack := packets.NewControlPacket(packets.Connack).(*packets.ConnackPacket)
 	conack.ReturnCode = packets.Accepted
-	conack.SessionPresent = true
+	if msg.CleanSession {
+		conack.SessionPresent = false
+	} else {
+		//如果服务器有保存session,则 SessionPresent设成true
+		//如果服务器没有保存session,则SessionPresent设成false
+		conack.SessionPresent = false
+	}
 
 	log.Debug("sessionMgr.OnConnected")
 	this.mgr.OnConnected(this)
