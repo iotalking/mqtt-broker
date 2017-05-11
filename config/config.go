@@ -4,7 +4,24 @@ import (
 	"time"
 )
 
-//restful api port
+var TcpPort = 1883
+
+//tcp ssl 加密端口
+var TcpTLSPort = 8883
+
+//websocket端口,url ip:port/mqtt
+var WSPort = 8083
+
+//websocket ssl加密商品,url ip:port/mqtts
+var WSSPort = 8084
+
+var CertFileName = "./mqttdebug.crt"
+var KeyFileName = "./mqttdebug.key"
+
+//pprof查看端口,url ip:port/debug/pprof
+var PprofPort = 6060
+
+//restful api port,url base:  ip:port/dashboard
 var RestfulPort = 8081
 
 var DashboordUrl = "/dashboard"

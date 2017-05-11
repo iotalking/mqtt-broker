@@ -21,16 +21,21 @@ func router() {
 
 	mux.HandleFunc(config.DashboordUrl+"/client", svrFile("./dashboard/www/client/index.html"))
 	mux.HandleFunc(config.DashboordUrl+"/client/browserMqtt.js", svrFile("./dashboard/www/client/browserMqtt.js"))
+	mux.HandleFunc(config.DashboordUrl+"/clientls", svrFile("./dashboard/www/client/tls.html"))
+
 }
 
-func run() {
+func run(addr string) {
 	router()
 	s := http.Server{}
-	s.Addr = fmt.Sprintf(":%d", config.RestfulPort)
+	s.Addr = addr
 	s.Handler = mux
 	go func() {
-		log.Debug("dashboad http started")
-		log.Println(s.ListenAndServe())
+		log.Debugf("dashboad http started on :%s", addr)
+		err := s.ListenAndServe()
+		if err != nil {
+			panic(err)
+		}
 	}()
 	duration := time.Second
 	var _secondsTimer = time.NewTimer(duration)

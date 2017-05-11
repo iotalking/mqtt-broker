@@ -1,0 +1,25 @@
+<html>
+<head>
+  <title>test Ws mqtt.js</title>
+</head>
+<body>
+<script src="./client/browserMqtt.js"></script>
+<div id=msg />
+<script>
+  var msg = document.getElementById('msg');
+  msg.innerText = "hello"
+  var client = mqtt.connect("wss://localhost:8084/mqtts",{rejectUnauthorized:false}) // you add a ws:// url here
+  client.subscribe("mqtt/demo")
+  client.subscribe("presence")
+ 
+  client.on("message", function (topic, payload) {
+	//console.log("topic:"+topic+"body:"+payload)
+ 
+	msg.innerText = "\ntopic:["+topic+"]body:["+payload+"]"
+  })
+ 
+  client.publish("mqtt/demo", "hello world!")
+</script> 
+
+</body>
+</html>

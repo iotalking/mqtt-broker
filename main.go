@@ -10,9 +10,10 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 
+	"github.com/iotalking/mqtt-broker/config"
 	"github.com/iotalking/mqtt-broker/dashboard"
+	"github.com/iotalking/mqtt-broker/network/tcp"
 	"github.com/iotalking/mqtt-broker/network/websocket"
-	"github.com/iotalking/mqtt-broker/safe-runtine"
 	"github.com/iotalking/mqtt-broker/session"
 
 	"net/http"
@@ -41,100 +42,68 @@ func init() {
 
 var listenNewChan = make(chan net.Listener)
 
-var wgExit sync.WaitGroup
-
 var basePort = 1883
-
-func mqttServer(r *runtine.SafeRuntine, args ...interface{}) {
-
-	wgExit.Add(1)
-	defer func() {
-		wgExit.Done()
-	}()
-	log.Debugf("mqttServer args:%#v", args)
-	addr := fmt.Sprintf(":%d", basePort+args[0].(int))
-	l, err := net.Listen("tcp", addr)
-
-	if err != nil {
-		panic(err)
-	}
-	if len(dashboard.Overview.BrokerAddress) == 0 {
-		dashboard.Overview.BrokerAddress = l.Addr().String()
-		log.Info("brokerAddress:", dashboard.Overview.BrokerAddress)
-	}
-	listenNewChan <- l
-	for {
-		c, err := l.Accept()
-
-		select {
-		case <-r.IsInterrupt:
-			log.Debugln("listener was instructed to quit")
-			return
-		default:
-		}
-		if err != nil {
-			log.Error("server accept error.", err)
-			break
-		} else {
-			if c == nil {
-				panic("Accept conn is nil")
-			}
-			if dashboard.Overview.OpenedFiles > dashboard.Overview.MaxOpenedFiles {
-				dashboard.Overview.MaxOpenedFiles.Set(int64(dashboard.Overview.OpenedFiles))
-			}
-			sessionMgr.HandleConnection(c)
-		}
-
-	}
-}
 
 var sessionMgr = session.GetMgr()
 
 func main() {
 	level := flag.String("log", "debug", "log level string")
-	listenMax := flag.Int("listenMax", 1, "max of listen port")
 	flag.Parse()
+
 	loglevel, err := log.ParseLevel(*level)
 	if err != nil {
 		panic(err)
 	}
 	log.SetLevel(loglevel)
 
-	log.Debugln("server running")
+	log.Debugln("server starting")
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		wg.Done()
+		log.Debug("starting tcp server...")
+		tcp.Start(fmt.Sprintf(":%d", config.TcpPort))
+	}()
+	wg.Add(1)
+	go func() {
+		wg.Done()
+		log.Debug("starting tcp tls server")
+		tcp.StartTLS(fmt.Sprintf(":%d", config.TcpTLSPort), config.CertFileName, config.KeyFileName)
+	}()
+	wg.Add(1)
+
+	wg.Add(1)
+	go func() {
+		wg.Done()
+		log.Debug("starting websocket server...")
+		websocket.Start(fmt.Sprintf(":%d", config.WSPort))
+	}()
+
+	wg.Add(1)
+	go func() {
+		wg.Done()
+		log.Debug("starting websocket tls server...")
+		websocket.StartTLS(fmt.Sprintf(":%d", config.WSSPort), config.CertFileName, config.KeyFileName)
+	}()
 
 	go func() {
-		log.Println(http.ListenAndServe(":6060", nil))
+		wg.Done()
+		log.Debug("starting restful api server...")
+		dashboard.Start(fmt.Sprintf(":%d", config.RestfulPort), sessionMgr)
 	}()
+
+	wg.Add(1)
 	go func() {
-		log.Info("starting websocket on :8083")
-		err = websocket.Start(":8083")
+		wg.Done()
+		log.Debug("starting debug pprof server...")
+		err = http.ListenAndServe(fmt.Sprintf(":%d", config.PprofPort), nil)
 		if err != nil {
-			panic("start websocket error")
+			panic(err)
 		}
 	}()
-
-	var closeAllListenChan = make(chan bool)
-	var listens []net.Listener
-
-	go func() {
-		for {
-			select {
-			case l := <-listenNewChan:
-				listens = append(listens, l)
-			case <-closeAllListenChan:
-				for _, l := range listens {
-					l.Close()
-				}
-				closeAllListenChan <- true
-			}
-		}
-	}()
-	dashboard.Init(sessionMgr)
-
-	for i := 0; i < *listenMax; i++ {
-		runtine.Go(mqttServer, i)
-	}
-
+	wg.Wait()
+	log.Debugln("server running")
 	// Trap SIGINT to trigger a shutdown.
 	signals := make(chan os.Signal, 1)
 
@@ -143,9 +112,8 @@ func main() {
 	select {
 	case <-signals:
 		//关闭服务器的端口监听，以退出
-		closeAllListenChan <- true
-		<-closeAllListenChan
-		wgExit.Wait()
+		tcp.Stop()
+		tcp.StopTLS()
 	}
 	log.Debugf("server stoped:%#v", sessionMgr)
 }

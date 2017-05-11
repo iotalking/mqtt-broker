@@ -3,7 +3,6 @@ package dashboard
 import (
 	"time"
 
-	"github.com/iotalking/mqtt-broker/safe-runtine"
 	"github.com/iotalking/mqtt-broker/utils"
 )
 
@@ -121,8 +120,6 @@ type OverviewData struct {
 	LastTickerBusyTime AtmI64
 	//定局定时器轮询最大耗时(ns）
 	MaxTickerBusyTime AtmI64
-	//私有成员
-	runtine *runtine.SafeRuntine
 
 	getChan chan byte
 	outChan chan OverviewData

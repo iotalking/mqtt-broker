@@ -2,8 +2,6 @@ package dashboard
 
 import (
 	"sync/atomic"
-
-	"github.com/iotalking/mqtt-broker/safe-runtine"
 )
 
 //线程安全64位整数
@@ -30,12 +28,9 @@ type SessionList struct {
 
 var sessionMgr SessionMgr
 
-func Init(mgr SessionMgr) {
+func Start(addr string, mgr SessionMgr) {
 	sessionMgr = mgr
 	Overview.getChan = make(chan byte)
 	Overview.outChan = make(chan OverviewData)
-	runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
-		Overview.runtine = r
-		run()
-	})
+	run(addr)
 }

@@ -21,12 +21,16 @@ var upgrader = websocket.Upgrader{
 	Subprotocols: []string{"mqtt", "mqttv3.1"},
 }
 
-func Start(addr string) error {
+func Start(addr string) {
+	log.Infof("starting websocket on :%s", addr)
 	mux.HandleFunc("/mqtt", serverWS)
 	s := http.Server{}
 	s.Addr = addr
 	s.Handler = mux
-	return s.ListenAndServe()
+	err := s.ListenAndServe()
+	if err != nil {
+		panic(err)
+	}
 }
 
 type readData struct {
