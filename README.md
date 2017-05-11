@@ -6,7 +6,7 @@
     Retain消息发送给有订阅此消息主题的新客户端
     CleanSession处理
     实现websocket [ok]
-    tls支持
+    tls支持 [ok]
     遗嘱处理
     登录验证
     Session做为客户端使用,benchmark中使用Session
