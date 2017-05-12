@@ -84,8 +84,10 @@ func (this *List) Remove(cb func(v interface{}) (del, c bool)) {
 			if !_continue {
 				break
 			}
+		} else {
+			f = f.Next()
 		}
-		f = f.Next()
+
 	}
 }
 
