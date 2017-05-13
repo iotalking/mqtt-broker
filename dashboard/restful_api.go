@@ -67,7 +67,7 @@ func run(addr string) {
 			perCnt++
 			if sps > 0 {
 				spsTotall += sps
-				Overview.SentMsgPerSeconds.Set(int64(rpsTotall / perCnt))
+				Overview.SentMsgPerSeconds.Set(int64(spsTotall / perCnt))
 			}
 			if rps > 0 {
 				rpsTotall += rps
