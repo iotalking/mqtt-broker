@@ -312,7 +312,8 @@ func (this *Session) Publish(msg *packets.PublishPacket) error {
 	if !this.IsConnected() || this.IsClosed() {
 		return errors.New("Publish session is stoped")
 	}
-	if this.inflightingList.Len() < config.MaxSizeOfInflight {
+	if this.inflightingList.Len() < config.MaxSizeOfInflight &&
+		this.channel.iSendList.Len() < config.MaxSizeOfPublishMsg {
 		this.insert2Inflight(msg)
 	} else {
 		this.peddingChan <- 1
@@ -418,29 +419,29 @@ func (this *Session) removeInflightMsg(msgId uint16) (imsg *inflightingMsg) {
 
 //检测重发队列是否有超时的消息
 func (this *Session) checkInflightList() {
-	if this.inflightingList.Len() == 0 {
-		return
-	}
-	now := time.Now().UnixNano()
+	if this.inflightingList.Len() > 0 {
 
-	var tmMsg = make([]*inflightingMsg, 0, this.inflightingList.Len())
+		now := time.Now().UnixNano()
 
-	this.inflightingList.Each(func(v interface{}) (stop bool) {
-		imsg := v.(*inflightingMsg)
-		if imsg.timeout <= now {
-			tmMsg = append(tmMsg, imsg)
+		var tmMsg = make([]*inflightingMsg, 0, this.inflightingList.Len())
+
+		this.inflightingList.Each(func(v interface{}) (stop bool) {
+			imsg := v.(*inflightingMsg)
+			if imsg.timeout <= now {
+				tmMsg = append(tmMsg, imsg)
+			}
+			return
+		})
+
+		if len(tmMsg) > 0 {
+			log.Debugf("Session[%s] has msg to resend", this.clientId)
 		}
-		return
-	})
-
-	if len(tmMsg) > 0 {
-		log.Debugf("Session[%s] has msg to resend", this.clientId)
-	}
-	for _, imsg := range tmMsg {
-		//超时，需要重发
-		imsg.retryCnt++
-		imsg.timeout = now + config.SentTimeout
-		this.channel.Send(imsg.msg)
+		for _, imsg := range tmMsg {
+			//超时，需要重发
+			imsg.retryCnt++
+			imsg.timeout = now + config.SentTimeout
+			this.channel.Send(imsg.msg)
+		}
 	}
 
 	if this.inflightingList.Len() < config.MaxSizeOfInflight {
