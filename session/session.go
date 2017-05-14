@@ -75,6 +75,8 @@ type Session struct {
 	inflightingList *utils.List
 
 	peddingMsgList *utils.List
+	//用来控制peddingMsgList的最大缓冲大小
+	peddingChan chan byte
 
 	onMessage func(*packets.PublishPacket)
 	mtxOnMsg  sync.Mutex
@@ -111,6 +113,7 @@ func NewSession(mgr *SessionMgr, conn io.ReadWriteCloser, isServer bool) *Sessio
 		sentMsgChan:     make(SentChan, 1),
 		inflightingList: utils.NewList(),
 		peddingMsgList:  utils.NewList(),
+		peddingChan:     make(chan byte, config.MaxSizeOfPublishMsg),
 	}
 	s.channel = NewChannel(conn, s)
 
@@ -213,6 +216,7 @@ func (this *Session) Close() {
 	}
 	atomic.StoreInt32(&this.clostep, closed)
 	log.Debug("session closing channel")
+	close(this.peddingChan)
 	this.channel.Close()
 	log.Debug("session is clostep")
 	return
@@ -301,12 +305,17 @@ func (this *Session) procFrontRemoteMsg(msg packets.ControlPacket) (err error) {
 //qos=1时，session收到PUBACK后才有结果
 //qos=2时, session收到PUBCOMP后才有结果
 func (this *Session) Publish(msg *packets.PublishPacket) error {
+	defer func() {
+		//this.peddingChan 关闭后会panic,不关闭会死锁
+		recover()
+	}()
 	if !this.IsConnected() || this.IsClosed() {
 		return errors.New("Publish session is stoped")
 	}
 	if this.inflightingList.Len() < config.MaxSizeOfInflight {
 		this.insert2Inflight(msg)
 	} else {
+		this.peddingChan <- 1
 		this.peddingMsgList.Push(msg)
 	}
 	return nil
@@ -435,6 +444,10 @@ func (this *Session) checkInflightList() {
 	}
 
 	if this.inflightingList.Len() < config.MaxSizeOfInflight {
+		select {
+		case <-this.peddingChan:
+		default:
+		}
 		v := this.peddingMsgList.Pop()
 		if v != nil {
 			this.insert2Inflight(v.(packets.ControlPacket))

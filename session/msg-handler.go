@@ -382,6 +382,10 @@ func (this *Session) onDisconnect(msg *packets.DisconnectPacket) error {
 func (this *Session) onPublishDone(msgId uint16) {
 	this.removeInflightMsg(msgId)
 	if this.inflightingList.Len() < config.MaxSizeOfInflight {
+		select {
+		case <-this.peddingChan:
+		default:
+		}
 		v := this.peddingMsgList.Pop()
 		if v != nil {
 			this.insert2Inflight(v.(packets.ControlPacket))

@@ -48,5 +48,5 @@ var SentTimeout = 5 * int64(time.Second)
 //重发消息的最大次数
 var MaxRetryTimes int = 5
 
-//SessionMgr publishMsg 的最大缓存数
-var MaxSizeOfPublishMsg = 100 * 1024
+//每个session 最大pedding消息数
+var MaxSizeOfPublishMsg = 10 * 1024
