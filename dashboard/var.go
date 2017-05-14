@@ -18,15 +18,14 @@ type OverviewData struct {
 
 	//总接入消息数
 	RecvMsgCnt AtmI64
+	//总发送消息数
+	SentMsgCnt AtmI64
 
 	//总接入字节
 	RecvBytes AtmI64
 
 	//总发送字节
 	SentBytes AtmI64
-
-	//总发送消息数
-	SentMsgCnt AtmI64
 
 	//每秒接入消息数
 	RecvBytesPerSeconds AtmI64
@@ -86,13 +85,16 @@ type OverviewData struct {
 	ClosingFiles AtmI64
 
 	//各类消息数
-	ConnectSentCnt     AtmI64
-	ConnackSentCnt     AtmI64
-	PublishSentCnt     AtmI64
-	PubackSentCnt      AtmI64
-	PubrecSentCnt      AtmI64
-	PubrelSentCnt      AtmI64
-	PubcompSentCnt     AtmI64
+	ConnectSentCnt AtmI64
+	ConnackSentCnt AtmI64
+
+	PublishSentCnt AtmI64
+	PubackRecvCnt  AtmI64
+
+	PubrecRecvCnt  AtmI64
+	PubrelSentCnt  AtmI64
+	PubcompRecvCnt AtmI64
+
 	SubscribeSentCnt   AtmI64
 	SubackSentCnt      AtmI64
 	UnsubscribeSentCnt AtmI64
@@ -101,13 +103,16 @@ type OverviewData struct {
 	PingrespSentCnt    AtmI64
 	DisconectSentCnt   AtmI64
 
-	ConnectRecvCnt     AtmI64
-	ConnackRecvCnt     AtmI64
-	PublishRecvCnt     AtmI64
-	PubackRecvCnt      AtmI64
-	PubrecRecvCnt      AtmI64
-	PubrelRecvCnt      AtmI64
-	PubcompRecvCnt     AtmI64
+	ConnectRecvCnt AtmI64
+	ConnackRecvCnt AtmI64
+
+	PublishRecvCnt AtmI64
+	PubackSentCnt  AtmI64
+
+	PubrecSentCnt  AtmI64
+	PubrelRecvCnt  AtmI64
+	PubcompSentCnt AtmI64
+
 	SubscribeRecvCnt   AtmI64
 	SubackRecvCnt      AtmI64
 	UnsubscribeRecvCnt AtmI64

@@ -1,12 +1,16 @@
 package session
 
 import (
+	"encoding/json"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/eclipse/paho.mqtt.golang/packets"
 
 	log "github.com/Sirupsen/logrus"
 
+	"github.com/iotalking/mqtt-broker/config"
+	"github.com/iotalking/mqtt-broker/dashboard"
 	"github.com/iotalking/mqtt-broker/store"
 )
 
@@ -60,6 +64,57 @@ func (this *Session) onConnack(msg *packets.ConnackPacket) error {
 	return nil
 }
 
+func (this *Session) getSessionInfoTopic() string {
+	return fmt.Sprintf("$session/%s/info", this.clientId)
+}
+func (this *Session) broadcastSessionInfo() error {
+	subMgr := this.mgr.GetSubscriptionMgr()
+	infoTopic := this.getSessionInfoTopic()
+	sessionQosMap, err := subMgr.GetSessions(infoTopic)
+	if err != nil {
+		log.Error("subMgr.GetSessions error:", err)
+		return err
+	}
+	if len(sessionQosMap) == 0 {
+		log.Info("sessionQosMap is empty for topic:", infoTopic)
+		return nil
+	}
+	go func() {
+		nmsg := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+		var info SessionInfo
+		info.Id = this.clientId
+		info.InflightMsgCnt = this.inflightingList.Len()
+		info.PeddingMsgCnt = this.peddingMsgList.Len()
+		info.SendingMsgCnt = this.channel.iSendList.Len()
+		bs, err := json.MarshalIndent(info, "", "\t")
+		log.Debug("broadcastSessionInfo ", info)
+
+		if err != nil {
+			log.Error("broadcastSessionInfo json.MarshalIndent :", err)
+			return
+		}
+		nmsg.Payload = bs
+		//qos取订阅和原消息的最小值
+		nmsg.Qos = 0
+
+		for v, _ := range sessionQosMap {
+			s := v.(*Session)
+			if s.IsConnected() && !s.IsClosed() {
+				err = s.Publish(nmsg)
+				if err != nil {
+					log.Errorf("session[%s].Publish Send error:", s.clientId, err)
+					break
+				}
+			} else {
+				log.Debug("session is disconnected or not connect")
+			}
+
+		}
+	}()
+
+	return nil
+}
+
 func (this *Session) sendToSubcriber(msg *packets.PublishPacket) error {
 	subMgr := this.mgr.GetSubscriptionMgr()
 
@@ -79,7 +134,7 @@ func (this *Session) sendToSubcriber(msg *packets.PublishPacket) error {
 			if qos < msg.Qos {
 				nmsg.Qos = qos
 			}
-			err = s.Send(msg)
+			err = s.Publish(msg)
 			if err != nil {
 				log.Errorf("session[%s].Publish Send error:", s.clientId, err)
 				break
@@ -89,6 +144,7 @@ func (this *Session) sendToSubcriber(msg *packets.PublishPacket) error {
 		}
 
 	}
+
 	return nil
 }
 
@@ -113,7 +169,7 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 			log.Debugf("retain msg has clear for client:%s", this.clientId)
 			return
 		}
-
+		dashboard.Overview.RecvMsgCnt.Add(1)
 		if this.isServer {
 			this.sendToSubcriber(msg)
 		} else {
@@ -121,6 +177,10 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 			this.callbackOnMessage(msg)
 		}
 	case 1:
+		ack := packets.NewControlPacket(packets.Puback).(*packets.PubackPacket)
+		ack.MessageID = msg.MessageID
+		this.channel.Send(ack)
+		dashboard.Overview.RecvMsgCnt.Add(1)
 		smsg := &store.Msg{
 			ClientId: this.clientId,
 			MsgId:    msg.MessageID,
@@ -136,9 +196,6 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 				return
 			}
 		}
-		ack := packets.NewControlPacket(packets.Puback).(*packets.PubackPacket)
-		ack.MessageID = msg.MessageID
-		this.Send(ack)
 
 		if this.isServer {
 			this.sendToSubcriber(msg)
@@ -147,32 +204,35 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 			this.callbackOnMessage(msg)
 		}
 	case 2:
-		//保存消息，等待PUBREL后再发送
-		smsg := &store.Msg{
-			ClientId: this.clientId,
-			MsgId:    msg.MessageID,
-			Topic:    msg.TopicName,
-			Qos:      msg.Qos,
-			Body:     msg.Payload,
-		}
-		err = this.mgr.GetStoreMgr().SaveByClientIdMsgId(smsg)
-		if err != nil {
-			log.Error(err)
-			err = packets.ConnErrors[packets.ErrRefusedServerUnavailable]
-			return
-		}
-		if msg.Retain {
-			err = this.mgr.GetStoreMgr().SaveRetainMsg(smsg)
+		ack := packets.NewControlPacket(packets.Pubrec).(*packets.PubrecPacket)
+		ack.MessageID = msg.MessageID
+		this.channel.Send(ack)
+
+		storeMgr := this.mgr.GetStoreMgr()
+		if _, err = storeMgr.GetMsgByClientIdMsgId(this.clientId, msg.MessageID); err == store.ErrNoExsit {
+			//保存消息，等待PUBREL后再发送
+			smsg := &store.Msg{
+				ClientId: this.clientId,
+				MsgId:    msg.MessageID,
+				Topic:    msg.TopicName,
+				Qos:      msg.Qos,
+				Body:     msg.Payload,
+			}
+			err = storeMgr.SaveByClientIdMsgId(smsg)
 			if err != nil {
 				log.Error(err)
 				err = packets.ConnErrors[packets.ErrRefusedServerUnavailable]
 				return
 			}
+			if msg.Retain {
+				err = this.mgr.GetStoreMgr().SaveRetainMsg(smsg)
+				if err != nil {
+					log.Error(err)
+					err = packets.ConnErrors[packets.ErrRefusedServerUnavailable]
+					return
+				}
+			}
 		}
-
-		ack := packets.NewControlPacket(packets.Pubrec).(*packets.PubrecPacket)
-		ack.MessageID = msg.MessageID
-		this.Send(ack)
 
 	}
 	return err
@@ -181,19 +241,18 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 //处理 PUBACK 消息
 //向qos=1的主题消息发布者应答
 func (this *Session) onPuback(msg *packets.PubackPacket) error {
-
-	this.removeInflightMsg(msg.Details().MessageID, packets.Publish)
-
+	this.onPublishDone(msg.MessageID)
 	return nil
 }
 
 //处理 PUBREC 消息
 func (this *Session) onPubrec(msg *packets.PubrecPacket) error {
 
-	this.removeInflightMsg(msg.Details().MessageID, packets.Publish)
+	this.updateInflightMsg(msg)
+
 	relmsg := packets.NewControlPacket(packets.Pubrel).(*packets.PubrelPacket)
 	relmsg.MessageID = msg.MessageID
-	this.Send(relmsg)
+	this.channel.Send(relmsg)
 	return nil
 }
 
@@ -201,18 +260,20 @@ func (this *Session) onPubrec(msg *packets.PubrecPacket) error {
 //向qos=2的主题消息发布者应答服务器第二步
 //对PUBREC的响应
 func (this *Session) onPubrel(msg *packets.PubrelPacket) error {
+	compmsg := packets.NewControlPacket(packets.Pubcomp).(*packets.PubcompPacket)
+	compmsg.MessageID = msg.MessageID
+	this.channel.Send(compmsg)
+
 	storeMgr := this.mgr.GetStoreMgr()
 	smsg, err := storeMgr.GetMsgByClientIdMsgId(this.clientId, msg.MessageID)
 	if err != nil {
-		log.Error(err)
+		log.Debugf("onPubrel error:%s,clientId:%s,msgId:%d", err, this.clientId, msg.MessageID)
 		return nil
 	}
-	storeMgr.RemoveMsgById(smsg.Id)
 
-	this.removeInflightMsg(msg.Details().MessageID, packets.Pubrec)
-	compmsg := packets.NewControlPacket(packets.Pubcomp).(*packets.PubcompPacket)
-	compmsg.MessageID = msg.MessageID
-	this.Send(compmsg)
+	dashboard.Overview.RecvMsgCnt.Add(1)
+
+	storeMgr.RemoveMsgById(smsg.Id)
 
 	pubMsg := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
 	pubMsg.Qos = smsg.Qos
@@ -225,7 +286,6 @@ func (this *Session) onPubrel(msg *packets.PubrelPacket) error {
 		//回调接入到消息的函数
 		this.callbackOnMessage(pubMsg)
 	}
-
 	return nil
 }
 
@@ -234,7 +294,7 @@ func (this *Session) onPubrel(msg *packets.PubrelPacket) error {
 //对PUBREL的响应
 //它是QoS 2等级协议交换的第四个也是最后一个报文
 func (this *Session) onPubcomp(msg *packets.PubcompPacket) error {
-	this.removeInflightMsg(msg.Details().MessageID, packets.Pubrel)
+	this.onPublishDone(msg.MessageID)
 	return nil
 }
 
@@ -259,7 +319,7 @@ func (this *Session) onSubscribe(msg *packets.SubscribePacket) error {
 
 	}
 
-	return this.Send(suback)
+	return this.channel.Send(suback)
 }
 
 //处理 SUBACK – 订阅确认
@@ -281,7 +341,7 @@ func (this *Session) onUnsubscribe(msg *packets.UnsubscribePacket) error {
 	ack := &packets.UnsubackPacket{
 		MessageID: msg.MessageID,
 	}
-	this.Send(ack)
+	this.channel.Send(ack)
 	return nil
 }
 
@@ -295,7 +355,8 @@ func (this *Session) onUnsuback(msg *packets.UnsubackPacket) error {
 //处理 PINGREQ
 func (this *Session) onPingreq(msg *packets.PingreqPacket) error {
 	pingresp := packets.NewControlPacket(packets.Pingresp).(*packets.PingrespPacket)
-	return this.Send(pingresp)
+	this.channel.Send(pingresp)
+	return nil
 }
 
 //处理 PINGRESP
@@ -317,29 +378,14 @@ func (this *Session) onDisconnect(msg *packets.DisconnectPacket) error {
 	return nil
 }
 
-//处理Publish的参数
-//qos=0
-//Channel.Send后直接给调用者结果
-//qos=1
-//要等待服务端返回PUBACK
-//如果超时要重发
-//qos=2
-//客户端时：
-//1.发送PUBLISH,如果超时没有收到PUBREC，要重发PUBLISH
-//2.发送PUBREL,如果超时没有收到PUBCOMP，要重发PUBREL
-//3.收到PUBCOMP,给发布者返回结果
-func (this *Session) onPublishData(msg *packets.PublishPacket) (err error) {
-	log.Debug("onPublishData")
-	msgId := this.lastMsgId + 1
-	this.lastMsgId++
-	msg.MessageID = uint16(msgId)
-	switch msg.Qos {
-	case 0:
-		err = this.Send(msg)
-
-	case 1, 2:
-		//都有多步流程
-		err = this.Send(msg)
+//消息发送完成。走完所有流程
+func (this *Session) onPublishDone(msgId uint16) {
+	this.removeInflightMsg(msgId)
+	if this.inflightingList.Len() < config.MaxSizeOfInflight {
+		v := this.peddingMsgList.Pop()
+		if v != nil {
+			this.insert2Inflight(v.(packets.ControlPacket))
+		}
 	}
-	return
+	dashboard.Overview.SentMsgCnt.Add(1)
 }

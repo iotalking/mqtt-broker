@@ -15,7 +15,7 @@ type List struct {
 func NewList() *List {
 	return &List{
 		l:  list.New(),
-		ch: make(chan byte),
+		ch: make(chan byte, 1),
 	}
 }
 
@@ -31,15 +31,17 @@ func (this *List) Push(v interface{}) {
 	}
 }
 func (this *List) Pop() interface{} {
+	this.mux.Lock()
+	defer this.mux.Unlock()
 
 	if this.l.Len() > 0 {
-		select {
-		case this.ch <- 0:
-		default:
-		}
-		this.mux.Lock()
 		v := this.l.Remove(this.l.Front())
-		this.mux.Unlock()
+		if this.l.Len() > 0 {
+			select {
+			case this.ch <- 0:
+			default:
+			}
+		}
 
 		return v
 	}
@@ -49,12 +51,6 @@ func (this *List) Len() int {
 	this.mux.Lock()
 	defer this.mux.Unlock()
 	return this.l.Len()
-}
-
-func (this *List) Front() *list.Element {
-	this.mux.Lock()
-	defer this.mux.Unlock()
-	return this.l.Front()
 }
 
 //遍历列表

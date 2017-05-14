@@ -58,9 +58,6 @@ type Session struct {
 	//递增1
 	lastMsgId int64
 
-	//重发时间到时告诉sesssion重发sendingMap中的某个消息
-	resendChan chan interface{}
-
 	//Publish消息的chan
 	publishChan chan *packets.PublishPacket
 	//从远端接收到的消息队列
@@ -76,6 +73,8 @@ type Session struct {
 	//发送中的消息，超时需要重发
 	//TODO 用msgId做为Map存储inflighting消息，可以优先内存以避免反复分配
 	inflightingList *utils.List
+
+	peddingMsgList *utils.List
 
 	onMessage func(*packets.PublishPacket)
 	mtxOnMsg  sync.Mutex
@@ -107,11 +106,11 @@ func NewSession(mgr *SessionMgr, conn io.ReadWriteCloser, isServer bool) *Sessio
 	s := &Session{
 		mgr:             mgr,
 		isServer:        isServer,
-		resendChan:      make(chan interface{}),
 		publishChan:     make(chan *packets.PublishPacket),
 		remoteMsgChan:   make(chan packets.ControlPacket),
 		sentMsgChan:     make(SentChan, 1),
 		inflightingList: utils.NewList(),
+		peddingMsgList:  utils.NewList(),
 	}
 	s.channel = NewChannel(conn, s)
 
@@ -133,7 +132,7 @@ func (this *Session) callbackOnMessage(msg *packets.PublishPacket) {
 	}
 }
 
-func (this *Session) Send(msg packets.ControlPacket) (err error) {
+func (this *Session) insert2Inflight(msg packets.ControlPacket) (err error) {
 	if this.channel.IsStop() {
 		return errors.New("%s channel is stoped")
 	}
@@ -145,6 +144,36 @@ func (this *Session) Send(msg packets.ControlPacket) (err error) {
 			msgtype = packets.Publish
 		}
 
+	case *packets.PubrecPacket:
+		msgtype = packets.Pubrec
+	case *packets.PubrelPacket:
+		msgtype = packets.Pubrel
+
+	}
+	if msgtype > 0 {
+		imsg := &inflightingMsg{
+			msg:     msg,
+			msgType: msgtype,
+			timeout: time.Now().UnixNano() + config.SentTimeout,
+		}
+		this.inflightingList.Push(imsg)
+	}
+	this.channel.Send(msg)
+	return nil
+}
+func (this *Session) Send(msg packets.ControlPacket) (err error) {
+	if this.channel.IsStop() {
+		return errors.New("%s channel is stoped")
+	}
+	var msgtype int
+
+	switch msg.(type) {
+	case *packets.PublishPacket:
+		if msg.Details().Qos > 0 {
+			msgtype = packets.Publish
+		}
+		pubmsg := msg.(*packets.PublishPacket)
+		pubmsg.MessageID = uint16(atomic.AddInt64(&this.lastMsgId, 1))
 	case *packets.PubrecPacket:
 		msgtype = packets.Pubrec
 	case *packets.PubrelPacket:
@@ -271,12 +300,16 @@ func (this *Session) procFrontRemoteMsg(msg packets.ControlPacket) (err error) {
 //qos=0时，session发送完数据就有结果
 //qos=1时，session收到PUBACK后才有结果
 //qos=2时, session收到PUBCOMP后才有结果
-func (this *Session) Publish(msg *packets.PublishPacket) {
-	if !this.IsConnected() {
-		return
+func (this *Session) Publish(msg *packets.PublishPacket) error {
+	if !this.IsConnected() || this.IsClosed() {
+		return errors.New("Publish session is stoped")
 	}
-
-	this.channel.Send(msg.Copy())
+	if this.inflightingList.Len() < config.MaxSizeOfInflight {
+		this.insert2Inflight(msg)
+	} else {
+		this.peddingMsgList.Push(msg)
+	}
+	return nil
 }
 
 //连接消息超时
@@ -325,6 +358,8 @@ func (this *Session) OnTick() {
 	}
 	//检测有没有要生发的消息
 	this.checkInflightList()
+
+	this.broadcastSessionInfo()
 }
 
 func (this *Session) mgrOnDisconnected() {
@@ -344,11 +379,23 @@ func (this *Session) mgrOnConnectTimeout() {
 	this.mgr.OnConnectTimeout(this)
 }
 
-func (this *Session) removeInflightMsg(msgId uint16, msgtype int) (imsg *inflightingMsg) {
+func (this *Session) updateInflightMsg(msg packets.ControlPacket) (imsg *inflightingMsg) {
+
+	this.inflightingList.Each(func(v interface{}) (stop bool) {
+		imsg = v.(*inflightingMsg)
+		if imsg.msg.Details().MessageID == msg.Details().MessageID {
+			imsg.msg = msg
+		}
+		return
+	})
+	return
+}
+
+func (this *Session) removeInflightMsg(msgId uint16) (imsg *inflightingMsg) {
 
 	this.inflightingList.Remove(func(v interface{}) (del, c bool) {
 		imsg = v.(*inflightingMsg)
-		if imsg.msg.Details().MessageID == msgId && imsg.msgType == msgtype {
+		if imsg.msg.Details().MessageID == msgId {
 			del = true
 			c = true
 			return
@@ -384,7 +431,14 @@ func (this *Session) checkInflightList() {
 		//超时，需要重发
 		imsg.retryCnt++
 		imsg.timeout = now + config.SentTimeout
-		this.channel.Resend(imsg.msg)
+		this.channel.Send(imsg.msg)
+	}
+
+	if this.inflightingList.Len() < config.MaxSizeOfInflight {
+		v := this.peddingMsgList.Pop()
+		if v != nil {
+			this.insert2Inflight(v.(packets.ControlPacket))
+		}
 	}
 }
 
@@ -459,6 +513,9 @@ func (this *Session) onChannelWrited(msg packets.ControlPacket, err error) {
 		case *packets.ConnackPacket:
 			dashboard.Overview.ConnackSentCnt.Add(1)
 		case *packets.PublishPacket:
+			if msg.Details().Qos == 0 {
+				dashboard.Overview.SentMsgCnt.Add(1)
+			}
 			dashboard.Overview.PublishSentCnt.Add(1)
 		case *packets.PubackPacket:
 			dashboard.Overview.PubackSentCnt.Add(1)
@@ -497,5 +554,4 @@ func (this *Session) onChannelWrited(msg packets.ControlPacket, err error) {
 		}
 
 	}
-	this.checkInflightList()
 }

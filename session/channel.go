@@ -1,17 +1,14 @@
 package session
 
 import (
-	"errors"
 	"io"
 	"net"
 	"sync/atomic"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/eclipse/paho.mqtt.golang/packets"
-	"github.com/iotalking/mqtt-broker/config"
 	"github.com/iotalking/mqtt-broker/dashboard"
 	"github.com/iotalking/mqtt-broker/safe-runtine"
-
 	"github.com/iotalking/mqtt-broker/utils"
 )
 
@@ -29,16 +26,11 @@ type Channel struct {
 	//下层数据通讯接口
 	conn io.ReadWriteCloser
 
-	//接入从调用者写入的消息
-	sendChan chan packets.ControlPacket
+	//内部发送的消息队列,所有还在流程中的消息
 
-	//需要重发的消息
-	resendList *utils.List
-
+	iSendList *utils.List
 	//写入从net.Conn里接入到的消息
-	session *Session
-	//错误chan
-	errChn      chan error
+	session     *Session
 	recvRuntine *runtine.SafeRuntine
 	sendRuntine *runtine.SafeRuntine
 
@@ -50,11 +42,9 @@ type Channel struct {
 //通过网络层接口进行数据通讯
 func NewChannel(c io.ReadWriteCloser, session *Session) *Channel {
 	var channel = &Channel{
-		conn:       c,
-		sendChan:   make(chan packets.ControlPacket, config.MaxSizeOfSendChannel),
-		session:    session,
-		errChn:     make(chan error),
-		resendList: utils.NewList(),
+		conn:      c,
+		session:   session,
+		iSendList: utils.NewList(),
 	}
 	if c == nil {
 		panic("NewChannel c == nil")
@@ -92,7 +82,7 @@ func (this *Channel) recvRun() {
 		this.session.onChannelReaded(msg, err)
 		if err == nil {
 			this.session.RecvMsg(msg)
-			dashboard.Overview.RecvMsgCnt.Add(1)
+
 			log.Debug("channel recv a msg:", msg.String())
 		} else {
 			this.session.OnChannelError(err)
@@ -108,28 +98,24 @@ func (this *Channel) sendRun() {
 
 	defer func() {
 		atomic.StoreInt32(&this.isStoped, 1)
-		close(this.sendChan)
-		log.Debug("Channel sendChan has closed")
 	}()
-	for {
+	for !this.sendRuntine.IsStoped() {
 		select {
-
 		case <-this.sendRuntine.IsInterrupt:
-			//要求安全退出
-			log.Debugln("recvRun IsInterrupt has closed:")
-			return
-		case <-this.resendList.Wait():
-			msg := this.resendList.Pop().(packets.ControlPacket)
-			err := this.writeMsg(msg)
-			if err != nil {
-				return
+		case <-this.iSendList.Wait():
+			for {
+				v := this.iSendList.Pop()
+				if v != nil {
+					err := this.writeMsg(v.(packets.ControlPacket))
+					if err != nil {
+						log.Errorf("channel.writeMsg error:%s,msg:%#v", err, v)
+						return
+					}
+				} else {
+					break
+				}
 			}
-		case msg := <-this.sendChan:
-			log.Debug("sending msg:", msg)
-			err := this.writeMsg(msg)
-			if err != nil {
-				return
-			}
+			this.session.checkInflightList()
 		}
 	}
 
@@ -150,7 +136,6 @@ func (this *Channel) writeMsg(msg packets.ControlPacket) (err error) {
 		return
 	}
 
-	dashboard.Overview.SentMsgCnt.Add(1)
 	return
 }
 
@@ -161,30 +146,8 @@ func (this *Channel) Send(msg packets.ControlPacket) (err error) {
 		log.Debug("channel is closed")
 		return
 	}
-	defer func() {
-		if recover() != nil {
-			err = errors.New("channel.sendChan is closed")
-		}
-	}()
-	if publishMsg, ok := msg.(*packets.PublishPacket); ok {
-		switch publishMsg.Details().Qos {
-		case 0:
-			this.sendChan <- msg
-		case 1, 2:
-			this.sendChan <- msg
-		default:
-			log.Debugf("Channel qos error drop msg")
-		}
-	} else {
-		this.sendChan <- msg
-	}
+	this.iSendList.Push(msg)
 	return
-}
-
-//重发消息，如PUBLISH,PUBACK,PUBREL,PUBREC,PUBCOMP
-//把包推到队列里
-func (this *Channel) Resend(msg packets.ControlPacket) {
-	this.resendList.Push(msg)
 }
 
 //安全退出
