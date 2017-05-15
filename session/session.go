@@ -143,9 +143,7 @@ func (this *Session) insert2Inflight(msg packets.ControlPacket) (err error) {
 
 	switch msg.(type) {
 	case *packets.PublishPacket:
-		if msg.Details().Qos > 0 {
-			msgtype = packets.Publish
-		}
+		msgtype = packets.Publish
 
 	case *packets.PubrecPacket:
 		msgtype = packets.Pubrec
@@ -444,7 +442,8 @@ func (this *Session) checkInflightList() {
 		}
 	}
 
-	if this.inflightingList.Len() < config.MaxSizeOfInflight {
+	if this.inflightingList.Len() < config.MaxSizeOfInflight &&
+		this.channel.iSendList.Len() < config.MaxSizeOfPublishMsg {
 		select {
 		case <-this.peddingChan:
 		default:
@@ -529,6 +528,7 @@ func (this *Session) onChannelWrited(msg packets.ControlPacket, err error) {
 		case *packets.PublishPacket:
 			if msg.Details().Qos == 0 {
 				dashboard.Overview.SentMsgCnt.Add(1)
+				this.onPublishDone(msg.Details().MessageID)
 			}
 			dashboard.Overview.PublishSentCnt.Add(1)
 		case *packets.PubackPacket:

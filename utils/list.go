@@ -20,6 +20,9 @@ func NewList() *List {
 }
 
 func (this *List) Push(v interface{}) {
+	if v == nil {
+		panic(nil)
+	}
 	this.mux.Lock()
 	this.len++
 	this.l.PushBack(v)

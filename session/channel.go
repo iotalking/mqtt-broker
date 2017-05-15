@@ -103,16 +103,15 @@ func (this *Channel) sendRun() {
 		select {
 		case <-this.sendRuntine.IsInterrupt:
 		case <-this.iSendList.Wait():
-			for {
+			for !this.sendRuntine.IsStoped() {
 				v := this.iSendList.Pop()
-				if v != nil {
-					err := this.writeMsg(v.(packets.ControlPacket))
-					if err != nil {
-						log.Errorf("channel.writeMsg error:%s,msg:%#v", err, v)
-						return
-					}
-				} else {
+				if v == nil {
 					break
+				}
+				err := this.writeMsg(v.(packets.ControlPacket))
+				if err != nil {
+					log.Errorf("channel.writeMsg error:%s,msg:%#v", err, v)
+					return
 				}
 			}
 			this.session.checkInflightList()
