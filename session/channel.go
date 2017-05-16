@@ -41,14 +41,15 @@ type Channel struct {
 //New 创建通道
 //通过网络层接口进行数据通讯
 func NewChannel(c io.ReadWriteCloser, session *Session) *Channel {
+	if c == nil {
+		panic("NewChannel c == nil")
+	}
 	var channel = &Channel{
 		conn:      c,
 		session:   session,
 		iSendList: utils.NewList(),
 	}
-	if c == nil {
-		panic("NewChannel c == nil")
-	}
+	session.channel = channel
 	channel.recvRuntine = runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
 		channel.recvRuntine = r
 		log.Debug("channel recv running")
@@ -97,6 +98,7 @@ func (this *Channel) recvRun() {
 func (this *Channel) sendRun() {
 
 	defer func() {
+		log.Debug("Channel.sendRun exited")
 		atomic.StoreInt32(&this.isStoped, 1)
 	}()
 	for !this.sendRuntine.IsStoped() {

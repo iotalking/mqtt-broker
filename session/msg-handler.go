@@ -46,7 +46,7 @@ func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 
 	log.Debug("session.Send")
 
-	err = this.Send(conack)
+	_, err = this.Send(conack)
 	atomic.StoreInt32(&this.connected, 1)
 
 	return
@@ -56,10 +56,20 @@ func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 //连接应答消息
 //此消息只有作为客户端时才会收到
 func (this *Session) onConnack(msg *packets.ConnackPacket) error {
-	atomic.StoreInt32(&this.connected, 1)
-	//如果是客户端要启动pingTimer定时器，定时发送定时包
-	//同时启动pingrespTimer定时器，检测服务器返回PINGRESP包有没有超时
-	//如果客户pingrespTimer时间内没有收到PINGRESP，则断开连接
+
+	if msg.ReturnCode > 0 {
+		atomic.StoreInt32(&this.connected, -int32(msg.ReturnCode))
+	} else {
+		atomic.StoreInt32(&this.connected, 1)
+	}
+	this.mgr.OnConnected(this)
+	if this.connectToken != nil {
+		if msg.ReturnCode != packets.Accepted {
+			//验证失败
+			this.connectToken.err = packets.ConnErrors[msg.ReturnCode]
+		}
+		this.connectToken.flowComplete()
+	}
 
 	return nil
 }
@@ -67,17 +77,17 @@ func (this *Session) onConnack(msg *packets.ConnackPacket) error {
 func (this *Session) getSessionInfoTopic() string {
 	return fmt.Sprintf("$session/%s/info", this.clientId)
 }
-func (this *Session) broadcastSessionInfo() error {
+func (this *Session) broadcastSessionInfo() {
 	subMgr := this.mgr.GetSubscriptionMgr()
 	infoTopic := this.getSessionInfoTopic()
 	sessionQosMap, err := subMgr.GetSessions(infoTopic)
 	if err != nil {
 		log.Error("subMgr.GetSessions error:", err)
-		return err
+		return
 	}
 	if len(sessionQosMap) == 0 {
 		log.Info("sessionQosMap is empty for topic:", infoTopic)
-		return nil
+		return
 	}
 	go func() {
 		nmsg := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
@@ -100,7 +110,7 @@ func (this *Session) broadcastSessionInfo() error {
 		for v, _ := range sessionQosMap {
 			s := v.(*Session)
 			if s.IsConnected() && !s.IsClosed() {
-				err = s.Publish(nmsg)
+				_, err = s.Publish(nmsg)
 				if err != nil {
 					log.Errorf("session[%s].Publish Send error:", s.clientId, err)
 					break
@@ -112,10 +122,11 @@ func (this *Session) broadcastSessionInfo() error {
 		}
 	}()
 
-	return nil
+	return
 }
 
 func (this *Session) sendToSubcriber(msg *packets.PublishPacket) error {
+	log.Debug("sendToSubcriber")
 	subMgr := this.mgr.GetSubscriptionMgr()
 
 	sessionQosMap, err := subMgr.GetSessions(msg.TopicName)
@@ -126,6 +137,7 @@ func (this *Session) sendToSubcriber(msg *packets.PublishPacket) error {
 	if len(sessionQosMap) == 0 {
 		log.Debug("sessionQosMap is empty for topic:", msg.TopicName)
 	}
+	log.Debug("sessionQosMap len:", len(sessionQosMap))
 	for v, qos := range sessionQosMap {
 		s := v.(*Session)
 		if s.IsConnected() && !s.IsClosed() {
@@ -134,7 +146,7 @@ func (this *Session) sendToSubcriber(msg *packets.PublishPacket) error {
 			if qos < msg.Qos {
 				nmsg.Qos = qos
 			}
-			err = s.Publish(msg)
+			_, err = s.Publish(msg)
 			if err != nil {
 				log.Errorf("session[%s].Publish Send error:", s.clientId, err)
 				break
@@ -159,7 +171,7 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 	case 0:
 		if msg.Retain {
 			//清空离线消息
-			err = this.mgr.storeMgr.RemoveMsgByTopic(msg.TopicName)
+			err = this.mgr.GetStoreMgr().RemoveMsgByTopic(msg.TopicName)
 			if err != nil {
 				log.Errorf("this.mgr.storeMgr.RemoveMsgByTopic error:", err)
 				if err == store.ErrNoExsit {
@@ -241,7 +253,7 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 //处理 PUBACK 消息
 //向qos=1的主题消息发布者应答
 func (this *Session) onPuback(msg *packets.PubackPacket) error {
-	this.onPublishDone(msg.MessageID)
+	this.onInflightDone(msg)
 	return nil
 }
 
@@ -294,7 +306,7 @@ func (this *Session) onPubrel(msg *packets.PubrelPacket) error {
 //对PUBREL的响应
 //它是QoS 2等级协议交换的第四个也是最后一个报文
 func (this *Session) onPubcomp(msg *packets.PubcompPacket) error {
-	this.onPublishDone(msg.MessageID)
+	this.onInflightDone(msg)
 	return nil
 }
 
@@ -326,8 +338,7 @@ func (this *Session) onSubscribe(msg *packets.SubscribePacket) error {
 //服务端发送SUBACK报文给客户端，用于确认它已收到并且正在处理SUBSCRIBE报文。
 //SUBACK报文包含一个返回码清单，它们指定了SUBSCRIBE请求的每个订阅被授予的最大QoS等级。
 func (this *Session) onSuback(msg *packets.SubackPacket) error {
-	//TODO
-
+	this.onInflightDone(msg)
 	return nil
 }
 
@@ -348,7 +359,7 @@ func (this *Session) onUnsubscribe(msg *packets.UnsubscribePacket) error {
 //处理 UNSUBSCRIBE –取消订阅确认
 //服务端发送UNSUBACK报文给客户端。
 func (this *Session) onUnsuback(msg *packets.UnsubackPacket) error {
-	//TODO
+	this.onInflightDone(msg)
 	return nil
 }
 
@@ -379,8 +390,19 @@ func (this *Session) onDisconnect(msg *packets.DisconnectPacket) error {
 }
 
 //消息发送完成。走完所有流程
-func (this *Session) onPublishDone(msgId uint16) {
-	this.removeInflightMsg(msgId)
+func (this *Session) onInflightDone(msg packets.ControlPacket) {
+	imsg := this.removeInflightMsg(msg.Details().MessageID)
+	if imsg != nil && imsg.pt != nil && imsg.pt.t != nil {
+		switch msg.Type() {
+		case packets.Suback:
+			var subToken *SubscribeToken = imsg.pt.t.(*SubscribeToken)
+			subackMsg := msg.(*packets.SubackPacket)
+			for i, sub := range subToken.subs {
+				subToken.subResult[sub] = subackMsg.ReturnCodes[i]
+			}
+		}
+		imsg.pt.t.flowComplete()
+	}
 	if this.inflightingList.Len() < config.MaxSizeOfInflight {
 		select {
 		case <-this.peddingChan:
@@ -388,7 +410,7 @@ func (this *Session) onPublishDone(msgId uint16) {
 		}
 		v := this.peddingMsgList.Pop()
 		if v != nil {
-			this.insert2Inflight(v.(packets.ControlPacket))
+			this.insert2Inflight(v.(*PacketAndToken))
 		}
 	}
 	dashboard.Overview.SentMsgCnt.Add(1)

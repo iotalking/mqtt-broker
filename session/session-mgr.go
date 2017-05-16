@@ -16,12 +16,22 @@ import (
 	"github.com/iotalking/mqtt-broker/store"
 )
 
-type SessionMgr struct {
+type SessionMgr interface {
+	HandleConnection(session *Session)
+	OnConnected(session *Session)
+	OnConnectTimeout(session *Session)
+	OnDisconnected(session *Session)
+	DisconectSessionByClientId(clientId string)
+	GetSubscriptionMgr() topic.SubscriptionMgr
+	GetSessions() dashboard.SessionList
+	GetStoreMgr() store.StoreMgr
+}
+type sessionMgr struct {
 	//主runtine
 	runtine *runtine.SafeRuntine
 
 	//用于处理新连接
-	newConnChan chan io.ReadWriteCloser
+	insertSessionChan chan *Session
 	//连接验证超时
 	connectTimeoutChan chan *Session
 	//连接验证通过
@@ -58,14 +68,14 @@ type SessionMgr struct {
 	storeMgr store.StoreMgr
 }
 
-var sessionMgr *SessionMgr
+var gSessionMgr *sessionMgr
 var sessionMgrOnce sync.Once
 
-func GetMgr() *SessionMgr {
+func GetMgr() SessionMgr {
 	sessionMgrOnce.Do(func() {
-		mgr := &SessionMgr{
+		mgr := &sessionMgr{
 			connectedSessionMap:             make(map[string]*Session),
-			newConnChan:                     make(chan io.ReadWriteCloser),
+			insertSessionChan:               make(chan *Session),
 			subscriptionMgr:                 topic.NewSubscriptionMgr(),
 			connectTimeoutChan:              make(chan *Session),
 			connectedChan:                   make(chan *Session),
@@ -107,14 +117,14 @@ func GetMgr() *SessionMgr {
 			mgr.tickerRuntine = r
 			mgr.tickerRun()
 		})
-		sessionMgr = mgr
+		gSessionMgr = mgr
 
 	})
 
-	return sessionMgr
+	return gSessionMgr
 }
 
-func (this *SessionMgr) Close() {
+func (this *sessionMgr) Close() {
 	if this.runtine.IsStoped() {
 		log.Warnf("Close:sessionMgr istoped")
 		return
@@ -124,20 +134,21 @@ func (this *SessionMgr) Close() {
 	this.runtine.Stop()
 }
 
-func (this *SessionMgr) CloseSession(s *Session) {
+func (this *sessionMgr) CloseSession(s *Session) {
 	dashboard.Overview.ClosingFiles.Add(1)
 	this.closeSessionChan <- s
 }
-func (this *SessionMgr) HandleConnection(c io.ReadWriteCloser) {
+func (this *sessionMgr) HandleConnection(session *Session) {
 	if this.runtine.IsStoped() {
 		log.Warnf("sessionMgr istoped")
 		return
 	}
 	dashboard.Overview.InactiveClients.Add(1)
 	dashboard.Overview.OpenedFiles.Add(1)
-	this.newConnChan <- c
+	this.insertSessionChan <- session
+	return
 }
-func (this *SessionMgr) tickerRun() {
+func (this *sessionMgr) tickerRun() {
 	var secondTicker = time.NewTimer(time.Second)
 	for {
 		select {
@@ -161,22 +172,22 @@ func (this *SessionMgr) tickerRun() {
 
 	}
 }
-func (this *SessionMgr) run() {
+func (this *sessionMgr) run() {
+	log.Debug("sessionMgr running...")
 	for {
 		select {
 		case <-this.runtine.IsInterrupt:
 			break
 
-		case c := <-this.newConnChan:
-			session := NewSession(this, c, true)
-			this.waitingConnectSessionMap[c] = session
+		case session := <-this.insertSessionChan:
+			this.waitingConnectSessionMap[session.channel.conn] = session
 
 		case s := <-this.connectTimeoutChan:
 			delete(this.waitingConnectSessionMap, s.channel.conn)
 			dashboard.Overview.InactiveClients.Add(-1)
 			this.CloseSession(s)
 		case s := <-this.connectedChan:
-			log.Infof("session %s connected", s.clientId)
+			log.Infof("session %s connected,%#v", s.clientId, s.channel)
 			delete(this.waitingConnectSessionMap, s.channel.conn)
 			this.connectedSessionMap[s.clientId] = s
 			dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
@@ -185,6 +196,7 @@ func (this *SessionMgr) run() {
 				dashboard.Overview.MaxActiveClinets.Set(dashboard.Overview.ActiveClients.Get())
 			}
 		case clientId := <-this.disconnectSessionByClientIdChan:
+			log.Debug("disconnectSessionByClientIdChan id:", clientId)
 			if s, ok := this.connectedSessionMap[clientId]; ok {
 				log.Info("sessionMgr disconnectSessionByClientId:", clientId)
 				delete(this.connectedSessionMap, clientId)
@@ -194,6 +206,7 @@ func (this *SessionMgr) run() {
 			}
 
 		case s := <-this.disconnectChan:
+			log.Debug("disconnectChan id:", s.clientId)
 			if _, ok := this.connectedSessionMap[s.clientId]; ok {
 				log.Info("sessionMgr disconnet client:", s.clientId)
 				delete(this.connectedSessionMap, s.clientId)
@@ -242,46 +255,46 @@ type mgrPublishData struct {
 	session *Session
 }
 
-func (this *SessionMgr) OnConnected(session *Session) {
+func (this *sessionMgr) OnConnected(session *Session) {
 	//不能阻塞session，不然会死锁
 	this.connectedChan <- session
 
 }
 
 //断开指定clientId的session
-func (this *SessionMgr) DisconectSessionByClientId(clientId string) {
+func (this *sessionMgr) DisconectSessionByClientId(clientId string) {
 	this.disconnectSessionByClientIdChan <- clientId
 }
-func (this *SessionMgr) OnDisconnected(session *Session) {
+func (this *sessionMgr) OnDisconnected(session *Session) {
 	//不能阻塞session，不然会死锁
 	this.disconnectChan <- session
 }
 
 //连接验证超时
-func (this *SessionMgr) OnConnectTimeout(session *Session) {
+func (this *sessionMgr) OnConnectTimeout(session *Session) {
 	//不能阻塞session，不然会死锁
 	this.connectTimeoutChan <- session
 }
 
-func (this *SessionMgr) GetSessions() dashboard.SessionList {
-	log.Debug("SessionMgr.GetSessions")
+func (this *sessionMgr) GetSessions() dashboard.SessionList {
+	log.Debug("sessionMgr.GetSessions")
 	this.getSessionsChan <- 1
 	return <-this.getSessionsResultChan
 }
 
-func (this *SessionMgr) getActiveSessions() []*Session {
+func (this *sessionMgr) getActiveSessions() []*Session {
 	this.getActiveSessionsChan <- 1
 	return <-this.getActiveSessionsResultChan
 }
 
-func (this *SessionMgr) getAllSesssions() []*Session {
+func (this *sessionMgr) getAllSesssions() []*Session {
 	this.getAllSessionChan <- 1
 	return <-this.getAllSessionResultChan
 }
 
-func (this *SessionMgr) GetSubscriptionMgr() topic.SubscriptionMgr {
+func (this *sessionMgr) GetSubscriptionMgr() topic.SubscriptionMgr {
 	return this.subscriptionMgr
 }
-func (this *SessionMgr) GetStoreMgr() store.StoreMgr {
+func (this *sessionMgr) GetStoreMgr() store.StoreMgr {
 	return this.storeMgr
 }

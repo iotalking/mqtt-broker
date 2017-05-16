@@ -22,9 +22,8 @@ import (
 type inflightingMsg struct {
 	//超时时间,纳秒
 	timeout int64
-	msg     packets.ControlPacket
+	pt      *PacketAndToken
 
-	msgType int
 	//已经重发的次数
 	retryCnt int
 }
@@ -38,7 +37,7 @@ const (
 
 //通道要保存服务端mqtt会话数据，比如tipic过滤器等
 type Session struct {
-	mgr      *SessionMgr
+	mgr      SessionMgr
 	clientId string
 	channel  *Channel
 	isServer bool
@@ -49,6 +48,9 @@ type Session struct {
 	//是否已经连接成功
 	//作为服务端时，已经接入到CONNECT包，并验证通过
 	//作为客户端时，表示服务端已经通过CONNECT包的验证
+	//==0:验证超时
+	//<0:表示验证失败的原因返回码的负值
+	//>0:验证成功
 	connected int32
 
 	//runtine的启动时间戳
@@ -71,15 +73,19 @@ type Session struct {
 	timeout int64
 
 	//发送中的消息，超时需要重发
-	//TODO 用msgId做为Map存储inflighting消息，可以优先内存以避免反复分配
+	//带MessageID的消息才会插入inflightList
 	inflightingList *utils.List
 
 	peddingMsgList *utils.List
 	//用来控制peddingMsgList的最大缓冲大小
 	peddingChan chan byte
 
-	onMessage func(*packets.PublishPacket)
-	mtxOnMsg  sync.Mutex
+	onMessageCb      func(*packets.PublishPacket)
+	onDisconnectedCb func()
+	mtxSet           sync.Mutex
+
+	connectToken    *ConnectToken
+	disconnectToken *DisconnectToken
 }
 
 //使用Session的一方调用Publish函数时，通过publishChan给Session传消息用
@@ -104,7 +110,7 @@ type sendingData struct {
 
 //创建会话
 //客户端会话和服务端会议的主要区别只是要不要发ping消息
-func NewSession(mgr *SessionMgr, conn io.ReadWriteCloser, isServer bool) *Session {
+func NewSession(mgr SessionMgr, conn io.ReadWriteCloser, isServer bool) *Session {
 	s := &Session{
 		mgr:             mgr,
 		isServer:        isServer,
@@ -115,33 +121,52 @@ func NewSession(mgr *SessionMgr, conn io.ReadWriteCloser, isServer bool) *Sessio
 		peddingMsgList:  utils.NewList(),
 		peddingChan:     make(chan byte, config.MaxSizeOfPublishMsg),
 	}
-	s.channel = NewChannel(conn, s)
+	NewChannel(conn, s)
 
 	return s
 }
 
-func (this *Session) RegisterOnMessage(cb func(*packets.PublishPacket)) {
-	this.mtxOnMsg.Lock()
-	defer this.mtxOnMsg.Unlock()
-	this.onMessage = cb
+func (this *Session) SetClientId(id string) {
+	this.clientId = id
+}
+func (this *Session) SetOnMessage(cb func(*packets.PublishPacket)) {
+	this.mtxSet.Lock()
+	defer this.mtxSet.Unlock()
+	this.onMessageCb = cb
+}
+
+func (this *Session) SetOnDisconnected(cb func()) {
+	this.mtxSet.Lock()
+	defer this.mtxSet.Unlock()
+	this.onDisconnectedCb = cb
+}
+
+func (this *Session) callbackOnDisconnected() {
+	this.mtxSet.Lock()
+	cb := this.onDisconnectedCb
+	this.mtxSet.Unlock()
+
+	if cb != nil {
+		cb()
+	}
 }
 func (this *Session) callbackOnMessage(msg *packets.PublishPacket) {
-	this.mtxOnMsg.Lock()
-	onMsg := this.onMessage
-	this.mtxOnMsg.Unlock()
+	this.mtxSet.Lock()
+	onMsg := this.onMessageCb
+	this.mtxSet.Unlock()
 
 	if onMsg != nil {
 		onMsg(msg)
 	}
 }
 
-func (this *Session) insert2Inflight(msg packets.ControlPacket) (err error) {
+func (this *Session) insert2Inflight(pt *PacketAndToken) (err error) {
 	if this.channel.IsStop() {
 		return errors.New("%s channel is stoped")
 	}
 	var msgtype int
 
-	switch msg.(type) {
+	switch pt.p.(type) {
 	case *packets.PublishPacket:
 		msgtype = packets.Publish
 
@@ -153,43 +178,54 @@ func (this *Session) insert2Inflight(msg packets.ControlPacket) (err error) {
 	}
 	if msgtype > 0 {
 		imsg := &inflightingMsg{
-			msg:     msg,
-			msgType: msgtype,
+			pt:      pt,
 			timeout: time.Now().UnixNano() + config.SentTimeout,
 		}
 		this.inflightingList.Push(imsg)
 	}
-	this.channel.Send(msg)
+	this.channel.Send(pt.p)
 	return nil
 }
-func (this *Session) Send(msg packets.ControlPacket) (err error) {
+func (this *Session) Send(msg packets.ControlPacket) (token Token, err error) {
 	if this.channel.IsStop() {
-		return errors.New("%s channel is stoped")
+		return nil, errors.New("%s channel is stoped")
 	}
+	pt := &PacketAndToken{
+		p: msg,
+		t: newToken(msg.Type()),
+	}
+	token = pt.t
 	var msgtype int
 
 	switch msg.(type) {
+	case *packets.ConnectPacket:
+		this.connectToken = token.(*ConnectToken)
+	case *packets.DisconnectPacket:
+		this.disconnectToken = token.(*DisconnectToken)
 	case *packets.PublishPacket:
-		if msg.Details().Qos > 0 {
-			msgtype = packets.Publish
-		}
+		msgtype = packets.Publish
 		pubmsg := msg.(*packets.PublishPacket)
 		pubmsg.MessageID = uint16(atomic.AddInt64(&this.lastMsgId, 1))
 	case *packets.PubrecPacket:
 		msgtype = packets.Pubrec
 	case *packets.PubrelPacket:
 		msgtype = packets.Pubrel
-
+	case *packets.SubscribePacket:
+		msgtype = packets.Subscribe
+		subMsg := msg.(*packets.SubscribePacket)
+		subToken := token.(*SubscribeToken)
+		subToken.subs = subMsg.Topics
+	case *packets.UnsubscribePacket:
+		msgtype = packets.Unsubscribe
 	}
 	if msgtype > 0 {
 		imsg := &inflightingMsg{
-			msg:     msg,
-			msgType: msgtype,
+			pt:      pt,
 			timeout: time.Now().UnixNano() + config.SentTimeout,
 		}
 		this.inflightingList.Push(imsg)
 	}
-	return this.channel.Send(msg)
+	return token, this.channel.Send(msg)
 }
 
 //判断是否已经连接成功
@@ -216,7 +252,30 @@ func (this *Session) Close() {
 	log.Debug("session closing channel")
 	close(this.peddingChan)
 	this.channel.Close()
-	log.Debug("session is clostep")
+	log.Debug("session channel.Close returned")
+	if this.isServer == false {
+		if this.IsConnected() {
+
+			if this.disconnectToken != nil {
+				log.Debug("disconnectToken will flowComplete")
+				this.disconnectToken.flowComplete()
+			}
+		} else {
+			//还没有验证成功就被Close了，那一定是验证超时,connected为负数不验证失败，
+			//验证失败在onConnack里处理
+			if atomic.LoadInt32(&this.connected) == 0 {
+				//验证超时
+				if this.connectToken != nil {
+					this.connectToken.err = errors.New("timeout")
+					this.connectToken.flowComplete()
+				}
+			}
+
+		}
+
+	}
+	this.callbackOnDisconnected()
+	log.Debug("Session.Close will return")
 	return
 }
 
@@ -226,21 +285,7 @@ func (this *Session) Ping() {
 		return
 	}
 	pingMsg := &packets.PingreqPacket{}
-	this.Send(pingMsg)
-}
-
-//给服务器发送连接消息
-//收到CONNACK或者超时时，通过SentChan告诉调用者，连接成功还是失败
-func (this *Session) Connect(msg *packets.ConnectPacket) error {
-	if this.IsConnected() {
-		return nil
-	}
-	if this.isServer {
-		//只有客户端才可以调用
-		panic("server can't call this function")
-		return nil
-	}
-	return this.Send(msg)
+	this.channel.Send(pingMsg)
 }
 
 func (this *Session) RecvMsg(msg packets.ControlPacket) {
@@ -302,22 +347,28 @@ func (this *Session) procFrontRemoteMsg(msg packets.ControlPacket) (err error) {
 //qos=0时，session发送完数据就有结果
 //qos=1时，session收到PUBACK后才有结果
 //qos=2时, session收到PUBCOMP后才有结果
-func (this *Session) Publish(msg *packets.PublishPacket) error {
+func (this *Session) Publish(msg *packets.PublishPacket) (token Token, err error) {
 	defer func() {
 		//this.peddingChan 关闭后会panic,不关闭会死锁
 		recover()
 	}()
+	pt := &PacketAndToken{
+		p: msg,
+		t: newToken(msg.Type()),
+	}
+	token = pt.t
 	if !this.IsConnected() || this.IsClosed() {
-		return errors.New("Publish session is stoped")
+		err = errors.New("Publish session is stoped")
+		return
 	}
 	if this.inflightingList.Len() < config.MaxSizeOfInflight &&
 		this.channel.iSendList.Len() < config.MaxSizeOfPublishMsg {
-		this.insert2Inflight(msg)
+		this.insert2Inflight(pt)
 	} else {
 		this.peddingChan <- 1
-		this.peddingMsgList.Push(msg)
+		this.peddingMsgList.Push(pt)
 	}
-	return nil
+	return
 }
 
 //连接消息超时
@@ -355,14 +406,20 @@ func (this *Session) OnTick() {
 
 	//服务端判断ping有没有超时
 	if now >= atomic.LoadInt64(&this.timeout) {
-
-		//接入PINGREQ超时，直接断开连接
-		if this.IsConnected() {
-			this.mgrOnDisconnected()
+		if this.isServer {
+			//接入PINGREQ超时，直接断开连接
+			if this.IsConnected() {
+				this.mgrOnDisconnected()
+			} else {
+				this.mgrOnConnectTimeout()
+			}
+			log.Debug("ping timeout")
 		} else {
-			this.mgrOnConnectTimeout()
+			//客户端主动发送心跳包
+			this.Ping()
+			log.Debug("ping")
 		}
-		log.Debug("ping timeout")
+
 	}
 	//检测有没有要生发的消息
 	this.checkInflightList()
@@ -374,7 +431,7 @@ func (this *Session) mgrOnDisconnected() {
 	if atomic.LoadInt32(&this.clostep) > 0 {
 		return
 	}
-	this.mgr.subscriptionMgr.RemoveSession(this)
+	this.mgr.GetSubscriptionMgr().RemoveSession(this)
 	atomic.StoreInt32(&this.clostep, closing)
 	this.mgr.OnDisconnected(this)
 }
@@ -382,7 +439,7 @@ func (this *Session) mgrOnConnectTimeout() {
 	if atomic.LoadInt32(&this.clostep) > 0 {
 		return
 	}
-	this.mgr.subscriptionMgr.RemoveSession(this)
+	this.mgr.GetSubscriptionMgr().RemoveSession(this)
 	atomic.StoreInt32(&this.clostep, closing)
 	this.mgr.OnConnectTimeout(this)
 }
@@ -391,8 +448,8 @@ func (this *Session) updateInflightMsg(msg packets.ControlPacket) (imsg *infligh
 
 	this.inflightingList.Each(func(v interface{}) (stop bool) {
 		imsg = v.(*inflightingMsg)
-		if imsg.msg.Details().MessageID == msg.Details().MessageID {
-			imsg.msg = msg
+		if imsg.pt.p.Details().MessageID == msg.Details().MessageID {
+			imsg.pt.p = msg
 		}
 		return
 	})
@@ -403,7 +460,7 @@ func (this *Session) removeInflightMsg(msgId uint16) (imsg *inflightingMsg) {
 
 	this.inflightingList.Remove(func(v interface{}) (del, c bool) {
 		imsg = v.(*inflightingMsg)
-		if imsg.msg.Details().MessageID == msgId {
+		if imsg.pt.p.Details().MessageID == msgId {
 			del = true
 			c = true
 			return
@@ -438,7 +495,7 @@ func (this *Session) checkInflightList() {
 			//超时，需要重发
 			imsg.retryCnt++
 			imsg.timeout = now + config.SentTimeout
-			this.channel.Send(imsg.msg)
+			this.channel.Send(imsg.pt.p)
 		}
 	}
 
@@ -450,7 +507,7 @@ func (this *Session) checkInflightList() {
 		}
 		v := this.peddingMsgList.Pop()
 		if v != nil {
-			this.insert2Inflight(v.(packets.ControlPacket))
+			this.insert2Inflight(v.(*PacketAndToken))
 		}
 	}
 }
@@ -493,21 +550,25 @@ func (this *Session) onChannelReaded(msg packets.ControlPacket, err error) {
 		case *packets.DisconnectPacket:
 			dashboard.Overview.DisconectRecvCnt.Add(1)
 		}
-		//服务端判断ping有没有超时
-		if this.isServer {
-			if this.IsConnected() {
-				atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.PingTimeout)
-			} else {
-				atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.ConnectTimeout)
-			}
-
-		} else {
-			//客户端判断接收PINGRESP超时
-			atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.PingrespTimeout)
-		}
+		this.resetTimeout()
 
 	}
 
+}
+
+func (this *Session) resetTimeout() {
+	//服务端判断ping有没有超时
+	if this.isServer {
+		if this.IsConnected() {
+			atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.PingrespTimeout)
+		} else {
+			atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.ConnectTimeout)
+		}
+
+	} else {
+		//客户端判断接收PINGRESP超时
+		atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.PingTimeout)
+	}
 }
 
 //channel调用conn写返回后的回调函数
@@ -528,7 +589,7 @@ func (this *Session) onChannelWrited(msg packets.ControlPacket, err error) {
 		case *packets.PublishPacket:
 			if msg.Details().Qos == 0 {
 				dashboard.Overview.SentMsgCnt.Add(1)
-				this.onPublishDone(msg.Details().MessageID)
+				this.onInflightDone(msg)
 			}
 			dashboard.Overview.PublishSentCnt.Add(1)
 		case *packets.PubackPacket:
@@ -554,18 +615,6 @@ func (this *Session) onChannelWrited(msg packets.ControlPacket, err error) {
 		case *packets.DisconnectPacket:
 			dashboard.Overview.DisconectSentCnt.Add(1)
 		}
-		//服务端判断ping有没有超时
-		if this.isServer {
-			if this.IsConnected() {
-				atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.PingTimeout)
-			} else {
-				atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.ConnectTimeout)
-			}
-
-		} else {
-			//客户端判断接收PINGRESP超时
-			atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.PingrespTimeout)
-		}
-
+		this.resetTimeout()
 	}
 }

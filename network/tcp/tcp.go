@@ -34,7 +34,7 @@ func Start(addr string) {
 			if dashboard.Overview.OpenedFiles > dashboard.Overview.MaxOpenedFiles {
 				dashboard.Overview.MaxOpenedFiles.Set(int64(dashboard.Overview.OpenedFiles))
 			}
-			sessionMgr.HandleConnection(c)
+			sessionMgr.HandleConnection(session.NewSession(sessionMgr, c, true))
 		}
 
 	}

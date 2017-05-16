@@ -12,7 +12,7 @@
 - [x]5. tls支持
 - [ ]6. 遗嘱处理
 - [ ]7. 登录验证
-- [ ]8. Session做为客户端使用,benchmark中使用Session
+- [x]8. Session做为客户端使用,benchmark中使用Session
 - [ ]9. dashboard页面实现
 - [ ]10. 实现管理配置后台
 - [ ]11. 发布1.0版本

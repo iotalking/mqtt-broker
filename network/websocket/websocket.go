@@ -94,6 +94,6 @@ func serverWS(resp http.ResponseWriter, req *http.Request) {
 	rwc := wsReadWriteCloser{
 		conn: conn,
 	}
-	sessionMgr.HandleConnection(&rwc)
+	sessionMgr.HandleConnection(session.NewSession(sessionMgr, &rwc, true))
 	log.Debug("ws mqtt exited")
 }
