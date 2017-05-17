@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime/trace"
 	"sync"
 
 	log "github.com/Sirupsen/logrus"
@@ -45,10 +46,20 @@ var listenNewChan = make(chan net.Listener)
 var basePort = 1883
 
 var sessionMgr = session.GetMgr()
+var level = flag.String("log", "debug", "log level string")
+var traceFileName = flag.String("trace", "", "out trace to file")
 
 func main() {
-	level := flag.String("log", "debug", "log level string")
 	flag.Parse()
+
+	if len(*traceFileName) > 0 {
+		f, err := os.OpenFile(*traceFileName, os.O_CREATE|os.O_WRONLY, 0666)
+		if err != nil {
+			panic(err)
+		}
+		trace.Start(f)
+		defer trace.Stop()
+	}
 
 	loglevel, err := log.ParseLevel(*level)
 	if err != nil {
@@ -115,5 +126,6 @@ func main() {
 		tcp.Stop()
 		tcp.StopTLS()
 	}
+
 	log.Debugf("server stoped:%#v", sessionMgr)
 }
