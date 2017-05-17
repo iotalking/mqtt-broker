@@ -281,10 +281,11 @@ func (this *Session) Close() {
 
 //发送ping消息
 func (this *Session) Ping() {
-	if this.IsConnected() {
+	if !this.IsConnected() {
+		log.Debug("Session is not connected")
 		return
 	}
-	pingMsg := &packets.PingreqPacket{}
+	pingMsg := packets.NewControlPacket(packets.Pingreq)
 	this.channel.Send(pingMsg)
 }
 
@@ -299,7 +300,7 @@ func (this *Session) RecvMsg(msg packets.ControlPacket) {
 //处理从远端接收到的消息
 func (this *Session) procFrontRemoteMsg(msg packets.ControlPacket) (err error) {
 
-	log.Debugf("procFrontRemoteMsg msg :", msg.String())
+	log.Debug("procFrontRemoteMsg msg :", msg.String())
 
 	switch msg.(type) {
 	case *packets.ConnectPacket:
@@ -423,8 +424,10 @@ func (this *Session) OnTick() {
 	}
 	//检测有没有要生发的消息
 	this.checkInflightList()
+	if this.isServer {
+		this.broadcastSessionInfo()
+	}
 
-	this.broadcastSessionInfo()
 }
 
 func (this *Session) mgrOnDisconnected() {

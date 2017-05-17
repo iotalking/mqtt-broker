@@ -58,8 +58,10 @@ func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 func (this *Session) onConnack(msg *packets.ConnackPacket) error {
 
 	if msg.ReturnCode > 0 {
+		log.Debug("server return conack code is:", msg.ReturnCode)
 		atomic.StoreInt32(&this.connected, -int32(msg.ReturnCode))
 	} else {
+		log.Debug("Session was connected")
 		atomic.StoreInt32(&this.connected, 1)
 	}
 	this.mgr.OnConnected(this)
