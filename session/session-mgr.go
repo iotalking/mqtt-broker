@@ -180,17 +180,21 @@ func (this *sessionMgr) run() {
 			break
 
 		case session := <-this.insertSessionChan:
+			log.Debug("insertSessionChan")
 			this.waitingConnectSessionMap[session.channel.conn] = session
-
+			session.channel.Start()
 		case s := <-this.connectTimeoutChan:
 			delete(this.waitingConnectSessionMap, s.channel.conn)
 			dashboard.Overview.InactiveClients.Add(-1)
 			this.CloseSession(s)
 		case s := <-this.connectedChan:
-			log.Infof("session %s connected,%#v", s.clientId, s.channel)
+			log.Debugf("session %s connected,%#v", s.clientId, s.channel)
 			delete(this.waitingConnectSessionMap, s.channel.conn)
+			if _, ok := this.waitingConnectSessionMap[s.channel.conn]; ok {
+				panic("not delete")
+			}
 			this.connectedSessionMap[s.clientId] = s
-			dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
+			dashboard.Overview.ActiveClients.Add(1)
 			dashboard.Overview.InactiveClients.Add(-1)
 			if dashboard.Overview.ActiveClients.Get() > dashboard.Overview.MaxActiveClinets.Get() {
 				dashboard.Overview.MaxActiveClinets.Set(dashboard.Overview.ActiveClients.Get())
@@ -201,7 +205,7 @@ func (this *sessionMgr) run() {
 				log.Info("sessionMgr disconnectSessionByClientId:", clientId)
 				delete(this.connectedSessionMap, clientId)
 				//由session mgr来安全退出session,因为是由mgr创建的
-				dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
+				dashboard.Overview.ActiveClients.Add(-1)
 				this.CloseSession(s)
 			}
 

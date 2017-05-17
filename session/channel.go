@@ -50,17 +50,20 @@ func NewChannel(c io.ReadWriteCloser, session *Session) *Channel {
 		iSendList: utils.NewList(),
 	}
 	session.channel = channel
-	channel.recvRuntine = runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
-		channel.recvRuntine = r
-		log.Debug("channel recv running")
-		channel.recvRun()
-	})
-	channel.sendRuntine = runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
-		channel.sendRuntine = r
-		log.Debug("channel send running")
-		channel.sendRun()
-	})
+
 	return channel
+}
+func (this *Channel) Start() {
+	this.recvRuntine = runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
+		this.recvRuntine = r
+		log.Debug("channel recv running")
+		this.recvRun()
+	})
+	this.sendRuntine = runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
+		this.sendRuntine = r
+		log.Debug("channel send running")
+		this.sendRun()
+	})
 }
 func (this *Channel) Read(p []byte) (n int, err error) {
 	n, err = this.conn.Read(p)
