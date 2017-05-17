@@ -62,8 +62,10 @@ func main() {
 		return
 	}
 	token.Wait()
+	i := 0
 	c.SetOnMessage(func(topic string, body []byte, qos byte) {
-		fmt.Printf("qos:%d topic:%s payload:%s\n", qos, topic, body)
+		i++
+		fmt.Printf("[%d]qos:%d topic:%s payload:%s\n", i, qos, topic, body)
 	})
 	signals := make(chan os.Signal, 1)
 	c.SetOnDisconnected(func() {
