@@ -20,6 +20,9 @@ var qos = flag.Int("q", 0, "the QoS of the message")
 var port = flag.Int("p", 1883, "the server port")
 var loglevel = flag.String("log", "error", "set log level.")
 var id = flag.String("i", "", "the id of the client")
+var index = flag.Bool("s", false, "show the message sequence number")
+var showHeader = flag.Bool("sh", true, "show the qos and topicname")
+var payloadstring = flag.Bool("ps", true, "show message payload as string")
 
 func main() {
 	log.SetOutput(os.Stdout)
@@ -65,7 +68,19 @@ func main() {
 	i := 0
 	c.SetOnMessage(func(topic string, body []byte, qos byte) {
 		i++
-		fmt.Printf("[%d]qos:%d topic:%s payload:%s\n", i, qos, topic, body)
+		if *showHeader {
+			if *index {
+				fmt.Printf("[%d]qos:%d topic:%s ", i, qos, topic)
+			} else {
+				fmt.Printf("qos:%d topic:%s ", qos, topic)
+			}
+		}
+		if *payloadstring {
+			fmt.Println(string(body))
+		} else {
+			fmt.Println(body)
+		}
+
 	})
 	signals := make(chan os.Signal, 1)
 	c.SetOnDisconnected(func() {
