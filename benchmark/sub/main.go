@@ -68,12 +68,11 @@ func main() {
 	i := 0
 	c.SetOnMessage(func(topic string, body []byte, qos byte) {
 		i++
+		if *index {
+			fmt.Printf("[%d]", i)
+		}
 		if *showHeader {
-			if *index {
-				fmt.Printf("[%d]qos:%d topic:%s ", i, qos, topic)
-			} else {
-				fmt.Printf("qos:%d topic:%s ", qos, topic)
-			}
+			fmt.Printf("qos:%d topic:%s ", qos, topic)
 		}
 		if *payloadstring {
 			fmt.Println(string(body))
