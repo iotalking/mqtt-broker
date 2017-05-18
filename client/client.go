@@ -36,9 +36,9 @@ type Client struct {
 	mainRuntine *runtine.SafeRuntine
 }
 
-func NewClient(id string) *Client {
+func NewClient(id string, mgr session.SessionMgr) *Client {
 	mgrOnce.Do(func() {
-		sessionMgr = session.GetMgr()
+		sessionMgr = mgr
 	})
 	c := &Client{
 		clientId: id,
@@ -63,6 +63,8 @@ func (this *Client) Connect(proto, addr string) (token session.Token, err error)
 	}
 	if err == nil {
 		connectMsg := packets.NewControlPacket(packets.Connect).(*packets.ConnectPacket)
+		connectMsg.ProtocolName = "MQTT"
+		connectMsg.ProtocolVersion = 4
 		connectMsg.Username = this.user
 		connectMsg.Password = this.password
 		connectMsg.ClientIdentifier = this.clientId

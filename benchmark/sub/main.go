@@ -11,6 +11,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/iotalking/mqtt-broker/client"
+	"github.com/iotalking/mqtt-broker/session"
 	"github.com/iotalking/mqtt-broker/utils"
 )
 
@@ -58,7 +59,7 @@ func main() {
 	if len(*id) == 0 {
 		*id = utils.NewId()
 	}
-	c := client.NewClient(*id)
+	c := client.NewClient(*id, session.GetMgr())
 	token, err := c.Connect(protocal, fmt.Sprintf("%s:%d", *host, *port))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, err.Error())

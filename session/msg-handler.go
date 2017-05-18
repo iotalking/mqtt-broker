@@ -393,6 +393,11 @@ func (this *Session) onDisconnect(msg *packets.DisconnectPacket) error {
 //消息发送完成。走完所有流程
 func (this *Session) onInflightDone(msg packets.ControlPacket) {
 	switch msg.Type() {
+	case packets.Publish:
+		if msg.Details().Qos > 0 {
+			break
+		}
+		fallthrough
 	case packets.Puback, packets.Pubcomp, packets.Suback, packets.Unsuback:
 		imsg := this.removeInflightMsg(msg.Details().MessageID)
 		if imsg != nil && imsg.pt != nil && imsg.pt.t != nil {
