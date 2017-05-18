@@ -46,7 +46,7 @@ func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 
 	log.Debug("session.Send")
 
-	_, err = this.Send(conack)
+	err = this.channel.Send(conack)
 	atomic.StoreInt32(&this.connected, 1)
 
 	return
@@ -262,11 +262,11 @@ func (this *Session) onPuback(msg *packets.PubackPacket) error {
 //处理 PUBREC 消息
 func (this *Session) onPubrec(msg *packets.PubrecPacket) error {
 
-	this.updateInflightMsg(msg)
-
 	relmsg := packets.NewControlPacket(packets.Pubrel).(*packets.PubrelPacket)
 	relmsg.MessageID = msg.MessageID
 	this.channel.Send(relmsg)
+
+	this.updateInflightMsg(relmsg)
 	return nil
 }
 
@@ -284,7 +284,6 @@ func (this *Session) onPubrel(msg *packets.PubrelPacket) error {
 		log.Debugf("onPubrel error:%s,clientId:%s,msgId:%d", err, this.clientId, msg.MessageID)
 		return nil
 	}
-
 	dashboard.Overview.RecvMsgCnt.Add(1)
 
 	storeMgr.RemoveMsgById(smsg.Id)
@@ -393,18 +392,23 @@ func (this *Session) onDisconnect(msg *packets.DisconnectPacket) error {
 
 //消息发送完成。走完所有流程
 func (this *Session) onInflightDone(msg packets.ControlPacket) {
-	imsg := this.removeInflightMsg(msg.Details().MessageID)
-	if imsg != nil && imsg.pt != nil && imsg.pt.t != nil {
-		switch msg.Type() {
-		case packets.Suback:
-			var subToken *SubscribeToken = imsg.pt.t.(*SubscribeToken)
-			subackMsg := msg.(*packets.SubackPacket)
-			for i, sub := range subToken.subs {
-				subToken.subResult[sub] = subackMsg.ReturnCodes[i]
+	switch msg.Type() {
+	case packets.Puback, packets.Pubcomp, packets.Suback, packets.Unsuback:
+		imsg := this.removeInflightMsg(msg.Details().MessageID)
+		if imsg != nil && imsg.pt != nil && imsg.pt.t != nil {
+			switch msg.Type() {
+			case packets.Suback:
+				var subToken *SubscribeToken = imsg.pt.t.(*SubscribeToken)
+				subackMsg := msg.(*packets.SubackPacket)
+				for i, sub := range subToken.subs {
+					subToken.subResult[sub] = subackMsg.ReturnCodes[i]
+				}
 			}
+			log.Debug("flowComplete for msgId:", imsg.pt.p.Details().MessageID)
+			imsg.pt.t.flowComplete()
 		}
-		imsg.pt.t.flowComplete()
 	}
+
 	if this.inflightingList.Len() < config.MaxSizeOfInflight {
 		select {
 		case <-this.peddingChan:

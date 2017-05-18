@@ -125,6 +125,7 @@ func (this *Channel) sendRun() {
 
 }
 func (this *Channel) writeMsg(msg packets.ControlPacket) (err error) {
+	log.Debug("Channel.Write :", msg.String())
 	//处理上层的消息
 	err = msg.Write(this)
 	//回调session,用于检查有没有要重发的消息，ping超时等

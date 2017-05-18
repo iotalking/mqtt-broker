@@ -215,7 +215,10 @@ func (this *Session) Send(msg packets.ControlPacket) (token Token, err error) {
 		subMsg := msg.(*packets.SubscribePacket)
 		subToken := token.(*SubscribeToken)
 		subToken.subs = subMsg.Topics
+		subMsg.MessageID = uint16(atomic.AddInt64(&this.lastMsgId, 1))
 	case *packets.UnsubscribePacket:
+		unsubMsg := msg.(*packets.UnsubscribePacket)
+		unsubMsg.MessageID = uint16(atomic.AddInt64(&this.lastMsgId, 1))
 		msgtype = packets.Unsubscribe
 	}
 	if msgtype > 0 {
@@ -353,6 +356,7 @@ func (this *Session) Publish(msg *packets.PublishPacket) (token Token, err error
 		//this.peddingChan 关闭后会panic,不关闭会死锁
 		recover()
 	}()
+	msg.MessageID = uint16(atomic.AddInt64(&this.lastMsgId, 1))
 	pt := &PacketAndToken{
 		p: msg,
 		t: newToken(msg.Type()),
@@ -465,7 +469,7 @@ func (this *Session) removeInflightMsg(msgId uint16) (imsg *inflightingMsg) {
 		imsg = v.(*inflightingMsg)
 		if imsg.pt.p.Details().MessageID == msgId {
 			del = true
-			c = true
+			c = false
 			return
 		}
 		del = false
