@@ -1,7 +1,10 @@
 package client
 
 import (
+	"crypto/tls"
+	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,16 +55,38 @@ func NewClient(id string, mgr session.SessionMgr) *Client {
 //mqtt:tcp tls
 //ws:websocket
 //wss:websocket tls
+//addr格式：
+//[username][:password]@ip[:port]
 func (this *Client) Connect(proto, addr string) (token session.Token, err error) {
 	this.proto = proto
 	this.addr = addr
+	//解析username和password
+	tmps := strings.Split(addr, "@")
+	if len(tmps) > 1 {
+		addr = tmps[1]
+		//包含用户名和密码段
+		tmps := strings.Split(tmps[0], ":")
+		this.user = tmps[0]
+		if len(tmps) > 1 {
+			this.password = []byte(tmps[1])
+		}
+
+	}
+	var c io.ReadWriteCloser
 	switch proto {
 	case "mqtt":
-		err = this.newTcpConn(addr)
+		c, err = this.newTcpConn(addr)
+	case "mqtts":
+		c, err = this.newTcpTlsConn(addr)
 	default:
-		err = this.newTcpConn(addr)
+		c, err = this.newTcpConn(addr)
 	}
+
 	if err == nil {
+		this.session = session.NewSession(this, c, false)
+		this.session.SetClientId(this.clientId)
+		sessionMgr.HandleConnection(this.session)
+
 		connectMsg := packets.NewControlPacket(packets.Connect).(*packets.ConnectPacket)
 		connectMsg.ProtocolName = "MQTT"
 		connectMsg.ProtocolVersion = 4
@@ -79,17 +104,16 @@ func (this *Client) Connect(proto, addr string) (token session.Token, err error)
 	return
 }
 
-func (this *Client) newTcpConn(addr string) (err error) {
-	c, err := net.DialTimeout("tcp", addr, time.Duration(config.ConnectTimeout))
-	if err != nil {
-		err := err.(net.Error)
-		return err
-	}
-	this.session = session.NewSession(this, c, false)
-	this.session.SetClientId(this.clientId)
-	sessionMgr.HandleConnection(this.session)
+func (this *Client) newTcpConn(addr string) (c io.ReadWriteCloser, err error) {
+	c, err = net.DialTimeout("tcp", addr, time.Duration(config.ConnectTimeout))
+	return
+}
 
-	return nil
+func (this *Client) newTcpTlsConn(addr string) (c io.ReadWriteCloser, err error) {
+	var config tls.Config
+	config.InsecureSkipVerify = true
+	c, err = tls.Dial("tcp", addr, &config)
+	return
 }
 
 func (this *Client) Disconnect() (err error) {

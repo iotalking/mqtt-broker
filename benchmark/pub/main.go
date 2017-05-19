@@ -15,10 +15,9 @@ import (
 	"github.com/iotalking/mqtt-broker/utils"
 )
 
-var host = flag.String("h", "localhost", "mqtt server address.protocal://ip:port,protocal:mqtt,mqtts,ws,wss")
+var host = flag.String("h", "mqtt://localhost:1883", "mqtt server address.protocal://[username][:password]@ip[:port],protocal:mqtt,mqtts,ws,wss")
 var topic = flag.String("t", "", "topic")
 var qos = flag.Int("q", 0, "the QoS of the message")
-var port = flag.Int("p", 1883, "the server port")
 var body = flag.String("m", "", "the message body")
 var loglevel = flag.String("log", "error", "set log level.")
 var id = flag.String("i", "", "the id of the client")
@@ -54,12 +53,13 @@ func main() {
 		protocal = "mqtt"
 	} else {
 		protocal = t[0]
+		*host = t[1]
 	}
 	if len(*id) == 0 {
 		*id = utils.NewId()
 	}
 	c := client.NewClient(*id, session.GetMgr())
-	token, err := c.Connect(protocal, fmt.Sprintf("%s:%d", *host, *port))
+	token, err := c.Connect(protocal, *host)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, err.Error())
 		return

@@ -88,3 +88,12 @@ condMsgTimeout(no)->loopInflightList
 loopTimeoutMsgIsEnd(yes)->chanelresend->e
 loopTimeoutMsgIsEnd(no)->loopTimeoutMsg
 ```
+
+##如何生产自签名证书
+```bash
+openssl genrsa -des3 -out server.key 2048
+openssl req -new -key mqttdebug.key mqttdebug.csr
+openssl req -new -key mqttdebug.key -out mqttdebug.csr
+openssl rsa -in mqttdebug.key.org -out mqttdebug.key
+openssl x509 -req -days 365 -in mqttdebug.csr -signkey mqttdebug.key -out mqttdebug.crt
+```
