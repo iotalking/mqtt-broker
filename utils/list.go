@@ -80,13 +80,12 @@ func (this *List) Remove(cb func(v interface{}) (del, c bool)) {
 			n := f.Next()
 			this.l.Remove(f)
 			f = n
-			if !_continue {
-				break
-			}
 		} else {
 			f = f.Next()
 		}
-
+		if !_continue {
+			break
+		}
 	}
 }
 
