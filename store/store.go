@@ -24,7 +24,7 @@ type InflightStore interface {
 	//以ClientId&MsgId作key
 	SaveByClientIdMsgId(msg *Msg) error
 	//以Topic作为key
-	SaveRetainMsg(msg *Msg) error
+	SaveRetainMsg(topic string, body []byte, qos byte) error
 
 	GetMsgByClientIdMsgId(clientId string, msgId uint16) (msg *Msg, err error)
 	//根据消息Id删除消息

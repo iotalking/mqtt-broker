@@ -43,12 +43,17 @@ func (this *memStore) SaveByClientIdMsgId(msg *store.Msg) error {
 }
 
 //以Topic作为key
-func (this *memStore) SaveRetainMsg(msg *store.Msg) error {
+func (this *memStore) SaveRetainMsg(topic string, body []byte, qos byte) error {
 	this.mtx.Lock()
 	defer this.mtx.Unlock()
+	msg := &store.Msg{
+		Topic: topic,
+		Body:  body,
+		Qos:   qos,
+	}
 	if len(msg.Body) == 0 {
 		//不能存储内容为空的消息，反而会删除相同主题的retain消息
-		delete(this.retainMsgs, msg.ClientId)
+		delete(this.retainMsgs, msg.Topic)
 	} else {
 		msg.ClientId = ""
 		msg.MsgId = 0

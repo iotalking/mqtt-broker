@@ -35,6 +35,31 @@ const (
 	closed = 2
 )
 
+type DisconnectReason int32
+
+func (dr DisconnectReason) Error() string {
+	switch dr {
+	case 0:
+		return "DISERR_OK"
+	case 1:
+		return "DISERR_SENT"
+	case 2:
+		return "DISERR_RECV"
+	}
+	return "DISERR_REASON_UNKNOWN"
+}
+
+const (
+	//没有异常断开
+	DISERR_OK DisconnectReason = 0
+	//发送异常
+	DISERR_SENT DisconnectReason = 1
+	//接收异常
+	DISERR_RECV DisconnectReason = 2
+	//PING超时
+	DISERR_PING_TIMEOUT DisconnectReason = 3
+)
+
 //通道要保存服务端mqtt会话数据，比如tipic过滤器等
 type Session struct {
 	mgr      SessionMgr
@@ -86,6 +111,15 @@ type Session struct {
 
 	connectToken    *ConnectToken
 	disconnectToken *DisconnectToken
+
+	willFlag    bool
+	willRetain  bool
+	willTopic   string
+	willQos     byte
+	willMessage []byte
+
+	//是否已经异常断开
+	hadDisconnectException int32
 }
 
 //使用Session的一方调用Publish函数时，通过publishChan给Session传消息用
@@ -414,11 +448,11 @@ func (this *Session) OnTick() {
 		if this.isServer {
 			//接入PINGREQ超时，直接断开连接
 			if this.IsConnected() {
-				this.mgrOnDisconnected()
+				this.mgrOnPingTimeout()
 			} else {
 				this.mgrOnConnectTimeout()
 			}
-			log.Debug("ping timeout")
+
 		} else {
 			//客户端主动发送心跳包
 			this.Ping()
@@ -441,6 +475,17 @@ func (this *Session) mgrOnDisconnected() {
 	this.mgr.GetSubscriptionMgr().RemoveSession(this)
 	atomic.StoreInt32(&this.clostep, closing)
 	this.mgr.OnDisconnected(this)
+}
+
+func (this *Session) mgrOnPingTimeout() {
+	log.Debug("mgrOnPingTimeout")
+	if atomic.LoadInt32(&this.clostep) > 0 {
+		return
+	}
+	this.mgr.GetSubscriptionMgr().RemoveSession(this)
+	atomic.StoreInt32(&this.clostep, closing)
+	this.mgr.OnPingTimeout(this)
+	go this.onDisconnectException(DISERR_PING_TIMEOUT)
 }
 func (this *Session) mgrOnConnectTimeout() {
 	if atomic.LoadInt32(&this.clostep) > 0 {
@@ -558,9 +603,9 @@ func (this *Session) onChannelReaded(msg packets.ControlPacket, err error) {
 			dashboard.Overview.DisconectRecvCnt.Add(1)
 		}
 		this.resetTimeout()
-
+	} else {
+		go this.onDisconnectException(DISERR_RECV)
 	}
-
 }
 
 func (this *Session) resetTimeout() {
@@ -623,5 +668,30 @@ func (this *Session) onChannelWrited(msg packets.ControlPacket, err error) {
 			dashboard.Overview.DisconectSentCnt.Add(1)
 		}
 		this.resetTimeout()
+	} else {
+		//写异常
+		go this.onDisconnectException(DISERR_SENT)
+	}
+}
+
+//异常断开发送will消息
+func (this *Session) onDisconnectException(reason DisconnectReason) {
+	if DisconnectReason(atomic.LoadInt32(&this.hadDisconnectException)) == DISERR_OK {
+		if this.willFlag {
+			msg := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+			msg.TopicName = this.willTopic
+			msg.Qos = this.willQos
+			msg.Payload = this.willMessage
+			this.sendToSubcriber(msg)
+			//保存willRetain的消息
+			if this.willRetain {
+				err := this.mgr.GetStoreMgr().SaveRetainMsg(msg.TopicName, msg.Payload, msg.Qos)
+				if err != nil {
+					log.Error(err)
+					return
+				}
+			}
+		}
+		atomic.StoreInt32(&this.hadDisconnectException, int32(reason))
 	}
 }

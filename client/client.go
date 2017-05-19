@@ -11,19 +11,16 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	"github.com/iotalking/mqtt-broker/config"
-	"github.com/iotalking/mqtt-broker/dashboard"
 	"github.com/iotalking/mqtt-broker/safe-runtine"
 	"github.com/iotalking/mqtt-broker/session"
-	"github.com/iotalking/mqtt-broker/store"
-	"github.com/iotalking/mqtt-broker/topic"
 
 	_ "github.com/iotalking/mqtt-broker/store/mem-provider"
 )
 
 var mgrOnce sync.Once
-var sessionMgr session.SessionMgr
 
 type Client struct {
+	sessionMgr  session.SessionMgr
 	session     *session.Session
 	proto       string
 	addr        string
@@ -40,11 +37,9 @@ type Client struct {
 }
 
 func NewClient(id string, mgr session.SessionMgr) *Client {
-	mgrOnce.Do(func() {
-		sessionMgr = mgr
-	})
 	c := &Client{
-		clientId: id,
+		sessionMgr: mgr,
+		clientId:   id,
 	}
 	return c
 }
@@ -83,14 +78,16 @@ func (this *Client) Connect(proto, addr string) (token session.Token, err error)
 	}
 
 	if err == nil {
-		this.session = session.NewSession(this, c, false)
+		this.session = session.NewSession(this.sessionMgr, c, false)
 		this.session.SetClientId(this.clientId)
-		sessionMgr.HandleConnection(this.session)
+		this.sessionMgr.HandleConnection(this.session)
 
 		connectMsg := packets.NewControlPacket(packets.Connect).(*packets.ConnectPacket)
 		connectMsg.ProtocolName = "MQTT"
 		connectMsg.ProtocolVersion = 4
+		connectMsg.UsernameFlag = true
 		connectMsg.Username = this.user
+		connectMsg.PasswordFlag = true
 		connectMsg.Password = this.password
 		connectMsg.ClientIdentifier = this.clientId
 		token, err = this.session.Send(connectMsg)
@@ -169,32 +166,6 @@ func (this *Client) SetOnMessage(cb func(topic string, body []byte, qos byte)) {
 
 	})
 }
-
 func (this *Client) SetOnDisconnected(cb func()) {
 	this.session.SetOnDisconnected(cb)
-}
-func (this *Client) HandleConnection(session *session.Session) {
-	sessionMgr.HandleConnection(session)
-	return
-}
-func (this *Client) OnConnected(session *session.Session) {
-	sessionMgr.OnConnected(session)
-}
-func (this *Client) OnConnectTimeout(session *session.Session) {
-	sessionMgr.OnConnectTimeout(session)
-}
-func (this *Client) OnDisconnected(session *session.Session) {
-	sessionMgr.OnDisconnected(session)
-}
-func (this *Client) DisconectSessionByClientId(clientId string) {
-	sessionMgr.DisconectSessionByClientId(clientId)
-}
-func (this *Client) GetSubscriptionMgr() topic.SubscriptionMgr {
-	return sessionMgr.GetSubscriptionMgr()
-}
-func (this *Client) GetSessions() dashboard.SessionList {
-	return sessionMgr.GetSessions()
-}
-func (this *Client) GetStoreMgr() store.StoreMgr {
-	return sessionMgr.GetStoreMgr()
 }

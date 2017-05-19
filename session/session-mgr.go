@@ -20,6 +20,7 @@ type SessionMgr interface {
 	HandleConnection(session *Session)
 	OnConnected(session *Session)
 	OnConnectTimeout(session *Session)
+	OnPingTimeout(session *Session)
 	OnDisconnected(session *Session)
 	DisconectSessionByClientId(clientId string)
 	GetSubscriptionMgr() topic.SubscriptionMgr
@@ -36,6 +37,10 @@ type sessionMgr struct {
 	connectTimeoutChan chan *Session
 	//连接验证通过
 	connectedChan chan *Session
+
+	//接入pingreq超时
+	pingTimeoutChan chan *Session
+
 	//已经连接难的session主动断开连接
 	disconnectChan chan *Session
 
@@ -81,6 +86,7 @@ func GetMgr() SessionMgr {
 			connectedChan:                   make(chan *Session),
 			disconnectSessionByClientIdChan: make(chan string),
 			disconnectChan:                  make(chan *Session),
+			pingTimeoutChan:                 make(chan *Session),
 			waitingConnectSessionMap:        make(map[io.ReadWriteCloser]*Session),
 			getSessionsChan:                 make(chan byte),
 			getSessionsResultChan:           make(chan dashboard.SessionList),
@@ -218,7 +224,15 @@ func (this *sessionMgr) run() {
 				dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
 				this.CloseSession(s)
 			}
-
+		case s := <-this.pingTimeoutChan:
+			log.Debug("ping timeout id:", s.clientId)
+			if _, ok := this.connectedSessionMap[s.clientId]; ok {
+				log.Info("sessionMgr disconnet client:", s.clientId)
+				delete(this.connectedSessionMap, s.clientId)
+				//由session mgr来安全退出session,因为是由mgr创建的
+				dashboard.Overview.ActiveClients.Set(int64(len(this.connectedSessionMap)))
+				this.CloseSession(s)
+			}
 		case <-this.getSessionsChan:
 			log.Debug("sessionMgr.getSessionsChan")
 			list := dashboard.SessionList{}
@@ -278,6 +292,11 @@ func (this *sessionMgr) OnDisconnected(session *Session) {
 func (this *sessionMgr) OnConnectTimeout(session *Session) {
 	//不能阻塞session，不然会死锁
 	this.connectTimeoutChan <- session
+}
+
+func (this *sessionMgr) OnPingTimeout(session *Session) {
+	//不能阻塞session，不然会死锁
+	this.pingTimeoutChan <- session
 }
 
 func (this *sessionMgr) GetSessions() dashboard.SessionList {

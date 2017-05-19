@@ -49,6 +49,13 @@ func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 	err = this.channel.Send(conack)
 	atomic.StoreInt32(&this.connected, 1)
 
+	if msg.WillFlag {
+		this.willFlag = true
+		this.willTopic = msg.WillTopic
+		this.willQos = msg.WillQos
+		this.willMessage = msg.WillMessage
+	}
+
 	return
 }
 
@@ -203,7 +210,7 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 			Body:     msg.Payload,
 		}
 		if msg.Retain {
-			err = this.mgr.GetStoreMgr().SaveRetainMsg(smsg)
+			err = this.mgr.GetStoreMgr().SaveRetainMsg(smsg.Topic, smsg.Body, smsg.Qos)
 			if err != nil {
 				log.Error(err)
 				err = packets.ConnErrors[packets.ErrRefusedServerUnavailable]
@@ -239,7 +246,7 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 				return
 			}
 			if msg.Retain {
-				err = this.mgr.GetStoreMgr().SaveRetainMsg(smsg)
+				err = this.mgr.GetStoreMgr().SaveRetainMsg(smsg.Topic, smsg.Body, smsg.Qos)
 				if err != nil {
 					log.Error(err)
 					err = packets.ConnErrors[packets.ErrRefusedServerUnavailable]
