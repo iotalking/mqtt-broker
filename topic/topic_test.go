@@ -72,3 +72,55 @@ func BenchmarkNodeGetSessions(b *testing.B) {
 		root.getSessions("aaaaa/bbbbb/ccccc/ddddd/eeeee/fffff/ggggg/hhhhh/iiiii/jjjjj")
 	}
 }
+
+func TestIsTopicMatch(t *testing.T) {
+	root := newNode()
+
+	topic := "a/b/c/d/e"
+	sub := "a/b/c/d/e"
+	if root.IsTopicMatch(topic, sub) != true {
+		t.Fatal("a/b/c/d/e not match a/b/c/d/e")
+	}
+	sub = "a/b/+/d/e"
+	if root.IsTopicMatch(topic, sub) != true {
+		t.Fatal("a/b/c/d/e not match a/b/+/d/e")
+	}
+	sub = "a/#"
+	if root.IsTopicMatch(topic, sub) != true {
+		t.Fatal("a/b/c/d/e not match a/#")
+	}
+	sub = "a/b/+/#"
+	if root.IsTopicMatch(topic, sub) != true {
+		t.Fatal("a/b/c/d/e not match a/b/+/#")
+	}
+	topic = "a/b/c/d/e/d"
+	sub = "a/b/c/d/e"
+	if root.IsTopicMatch(topic, sub) == true {
+		t.Fatal("a/b/c/d/e/d not match a/b/c/d/e")
+	}
+	topic = "a/b/c/d"
+	sub = "a/b/c/d/e"
+	if root.IsTopicMatch(topic, sub) == true {
+		t.Fatal("a/b/c/d not match a/b/c/d/e")
+	}
+	topic = "a/b/c/d/"
+	sub = "a/b/c/d/+"
+	if root.IsTopicMatch(topic, sub) == false {
+		t.Fatal("a/b/c/d/ not match a/b/c/d/+")
+	}
+	topic = "a/b/c/d"
+	sub = "a/b/c/d/+"
+	if root.IsTopicMatch(topic, sub) == false {
+		t.Fatal("a/b/c/d not match a/b/c/d/+")
+	}
+	topic = "a/b/c/d/"
+	sub = "a/b/c/d/#"
+	if root.IsTopicMatch(topic, sub) == false {
+		t.Fatal("a/b/c/d/ not match a/b/c/d/+")
+	}
+	topic = "a/b/c/d"
+	sub = "a/b/c/d/#"
+	if root.IsTopicMatch(topic, sub) == false {
+		t.Fatal("a/b/c/d/ not match a/b/c/d/+")
+	}
+}

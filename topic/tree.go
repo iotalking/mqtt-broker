@@ -174,3 +174,55 @@ func (this *treeSubsMgr) GetSessions(topic string) (SessoinQosMap, error) {
 	sqm := this.getSessions(topic)
 	return sqm, nil
 }
+
+//判断主题和订阅是否匹配
+func (this *treeSubsMgr) IsTopicMatch(topic string, subscription string) bool {
+	//TODO
+	//要做subscription合法性校验
+	topicLen := len(topic)
+	subLen := len(subscription)
+	i := 0
+	j := 0
+	for i < subLen && j < topicLen {
+		//如果字体相等则比较下一个,
+		//如果不等：
+		//如果subscription[i]是“+”,那么topic直接查找'/‘或者结尾,之间的字体都认为是匹配的
+		//如果subscription[i]是"#",那么topic后面的字符可以忽略，认为匹配
+		//其它不匹配
+		c := subscription[i]
+		if c == topic[i] {
+			i++
+			j++
+			continue
+		}
+		switch c {
+		case '+':
+			for j < topicLen {
+				if topic[j] == '/' {
+					break
+				}
+				j++
+			}
+			i++
+		case '#':
+			return true
+		default:
+			return false
+		}
+	}
+	if i != subLen || j != topicLen {
+		//处理topic比subscription短的情况
+		if j == topicLen {
+			tail := string(subscription[i:])
+			switch tail {
+			case "+", "#", "/+", "/#":
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+func (this *treeSubsMgr) IsSubscriptionValid(sub string) {
+
+}

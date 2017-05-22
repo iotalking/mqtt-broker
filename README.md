@@ -6,7 +6,7 @@
 
 ## TODO:
 - [x]1. Session的发送窗口，即发送窗口满时，不能发其它消息
-- [ ]2. Retain消息发送给有订阅此消息主题的新客户端
+- [x]2. Retain消息发送给有订阅此消息主题的新客户端
 - [ ]3. CleanSession处理
 - [x]4. 实现websocket
 - [x]5. tls支持

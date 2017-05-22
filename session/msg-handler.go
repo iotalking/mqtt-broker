@@ -147,6 +147,7 @@ func (this *Session) sendToSubcriber(msg *packets.PublishPacket) error {
 		log.Debug("sessionQosMap is empty for topic:", msg.TopicName)
 	}
 	log.Debug("sessionQosMap len:", len(sessionQosMap))
+	msg.Retain = false
 	for v, qos := range sessionQosMap {
 		s := v.(*Session)
 		if s.IsConnected() && !s.IsClosed() {
@@ -171,24 +172,48 @@ func (this *Session) sendToSubcriber(msg *packets.PublishPacket) error {
 
 //处理 PUBLISH 消息
 //发布消息
+//retain消息的处理方式：
+//1.服务端只保存payload不为空的消息
+//2.服务端收到payload为空的消息清空以前相关主题的消息
 func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 	log.Debug("session onpublish")
 	//从mgr获取和tipic匹配的sessions
 	//TODO:获取匹配的sessions
-
-	switch msg.Qos {
-	case 0:
+	payloadLen := len(msg.Payload)
+	if payloadLen == 0 {
 		if msg.Retain {
-			//清空离线消息
 			err = this.mgr.GetStoreMgr().RemoveMsgByTopic(msg.TopicName)
 			if err != nil {
 				log.Errorf("this.mgr.storeMgr.RemoveMsgByTopic error:", err)
 				if err == store.ErrNoExsit {
 					err = nil
+				} else {
+					return
 				}
 			}
-			log.Debugf("retain msg has clear for client:%s", this.clientId)
-			return
+		}
+
+	}
+	switch msg.Qos {
+	case 0:
+		if msg.Retain {
+			//清空离线消息
+			if payloadLen > 0 {
+				err = this.mgr.GetStoreMgr().RemoveMsgByTopic(msg.TopicName)
+				if err != nil {
+					log.Errorf("this.mgr.storeMgr.RemoveMsgByTopic error:", err)
+					if err == store.ErrNoExsit {
+						err = nil
+					}
+				}
+				log.Debugf("retain msg has clear for client:%s", this.clientId)
+
+				err = this.mgr.GetStoreMgr().SaveRetainMsg(msg.TopicName, msg.Payload, msg.Qos)
+				if err != nil {
+					log.Errorf("SaveRetainMsg error:%s", err.Error())
+				}
+			}
+
 		}
 		dashboard.Overview.RecvMsgCnt.Add(1)
 		if this.isServer {
@@ -209,13 +234,17 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 			Qos:      msg.Qos,
 			Body:     msg.Payload,
 		}
+
 		if msg.Retain {
-			err = this.mgr.GetStoreMgr().SaveRetainMsg(smsg.Topic, smsg.Body, smsg.Qos)
-			if err != nil {
-				log.Error(err)
-				err = packets.ConnErrors[packets.ErrRefusedServerUnavailable]
-				return
+			if payloadLen > 0 {
+				err = this.mgr.GetStoreMgr().SaveRetainMsg(smsg.Topic, smsg.Body, smsg.Qos)
+				if err != nil {
+					log.Error(err)
+					err = packets.ConnErrors[packets.ErrRefusedServerUnavailable]
+					return
+				}
 			}
+
 		}
 
 		if this.isServer {
@@ -246,12 +275,15 @@ func (this *Session) onPublish(msg *packets.PublishPacket) (err error) {
 				return
 			}
 			if msg.Retain {
-				err = this.mgr.GetStoreMgr().SaveRetainMsg(smsg.Topic, smsg.Body, smsg.Qos)
-				if err != nil {
-					log.Error(err)
-					err = packets.ConnErrors[packets.ErrRefusedServerUnavailable]
-					return
+				if payloadLen > 0 {
+					err = this.mgr.GetStoreMgr().SaveRetainMsg(smsg.Topic, smsg.Body, smsg.Qos)
+					if err != nil {
+						log.Error(err)
+						err = packets.ConnErrors[packets.ErrRefusedServerUnavailable]
+						return
+					}
 				}
+
 			}
 		}
 
@@ -338,8 +370,32 @@ func (this *Session) onSubscribe(msg *packets.SubscribePacket) error {
 		}
 
 	}
+	//向客户端发送匹配主题的retain消息
+	go this.procRetainMessages(msg)
 
 	return this.channel.Send(suback)
+}
+func (this *Session) procRetainMessages(msg *packets.SubscribePacket) {
+	subMgr := this.mgr.GetSubscriptionMgr()
+	storeMgr := this.mgr.GetStoreMgr()
+	msgs, err := storeMgr.GetAllRetainMsgs()
+	if err != nil {
+		log.Debug("no retain messages")
+		return
+	}
+	pubMsg := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+	log.Debug("retain len:", len(msgs))
+	for _, msg := range msgs {
+		log.Debug("%#v", msg)
+		pubMsg.Retain = true
+		pubMsg.TopicName = msg.Topic
+		pubMsg.Qos = msg.Qos
+		pubMsg.Payload = msg.Body
+		if subMgr.IsTopicMatch(msg.Topic, msg.Topic) {
+			//匹配主题，发送给session
+			this.Publish(pubMsg.Copy())
+		}
+	}
 }
 
 //处理 SUBACK – 订阅确认

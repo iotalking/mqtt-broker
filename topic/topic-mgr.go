@@ -16,6 +16,9 @@ type SubscriptionMgr interface {
 	RemoveSession(session interface{})
 	//返回匹配主题的session列表
 	GetSessions(topic string) (SessoinQosMap, error)
+
+	//判断主题和订阅是否匹配
+	IsTopicMatch(topic string, subscription string) bool
 }
 
 func NewSubscriptionMgr() SubscriptionMgr {

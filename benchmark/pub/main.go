@@ -22,6 +22,7 @@ var body = flag.String("m", "", "the message body")
 var loglevel = flag.String("log", "error", "set log level.")
 var id = flag.String("i", "", "the id of the client")
 var times = flag.Int("c", 1, "publish message times")
+var retain = flag.Bool("r", false, "retain message")
 
 func main() {
 	log.SetOutput(os.Stdout)
@@ -75,7 +76,7 @@ func main() {
 	})
 	go func() {
 		for *times > 0 {
-			token, err := c.Publish(*topic, []byte(*body), byte(*qos), false)
+			token, err := c.Publish(*topic, []byte(*body), byte(*qos), *retain)
 			if err != nil {
 				log.Error("publish error:", err)
 				break
