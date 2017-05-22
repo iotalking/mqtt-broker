@@ -383,17 +383,18 @@ func (this *Session) procRetainMessages(msg *packets.SubscribePacket) {
 		log.Debug("no retain messages")
 		return
 	}
-	pubMsg := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+
 	log.Debug("retain len:", len(msgs))
 	for _, msg := range msgs {
-		log.Debug("%#v", msg)
+		pubMsg := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+		log.Debugf("%#v", msg)
 		pubMsg.Retain = true
 		pubMsg.TopicName = msg.Topic
 		pubMsg.Qos = msg.Qos
 		pubMsg.Payload = msg.Body
 		if subMgr.IsTopicMatch(msg.Topic, msg.Topic) {
 			//匹配主题，发送给session
-			this.Publish(pubMsg.Copy())
+			this.Publish(pubMsg)
 		}
 	}
 }
