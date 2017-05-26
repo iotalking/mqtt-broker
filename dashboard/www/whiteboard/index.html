@@ -42,12 +42,12 @@
 				var reg = /name=(\w+)/;
 				if(location.hash == ""){
 					m = document.cookie.match(reg)
-					location.hash = document.cookie;
 				}else{
 					m = location.hash.match(reg)
 				}
 				if(m){
 					this.boardName = m[1];
+					location.hash = `name=${this.boardName}`;
 				}
 				this.clearBoard();
 				this.connect();
