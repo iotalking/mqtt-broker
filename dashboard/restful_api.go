@@ -3,25 +3,33 @@ package dashboard
 import (
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
 	"reflect"
+	"strings"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
 
 	"github.com/iotalking/mqtt-broker/config"
+	"github.com/iotalking/mqtt-broker/utils"
 )
 
 var mux = http.NewServeMux()
 
 func router() {
+	mime.AddExtensionType(".js", "application/javascript")
+	mime.AddExtensionType(".html", "text/html")
+	mime.AddExtensionType(".png", "image/png")
+
 	mux.HandleFunc(config.DashboordApiUrl+"/overview", Overview.Get)
 	mux.HandleFunc(config.DashboordApiUrl+"/log", SetLogLevel)
 	mux.HandleFunc(config.DashboordApiUrl+"/activeSessions", GetSessions)
 
-	mux.HandleFunc(config.DashboordUrl+"/client", svrFile("./dashboard/www/client/index.html"))
-	mux.HandleFunc(config.DashboordUrl+"/client/browserMqtt.js", svrFile("./dashboard/www/client/browserMqtt.js"))
-	mux.HandleFunc(config.DashboordUrl+"/clientls", svrFile("./dashboard/www/client/tls.html"))
+	HandleDir(config.DashboordUrl+"/www/client/", "./dashboard/www/client/")
+	HandleDir(config.DashboordUrl+"/www/libs/", "./dashboard/www/libs/")
+
+	HandleWhiteBoard(config.DashboordUrl+"/www/whiteboard/", "./dashboard/www/whiteboard/")
 
 }
 
@@ -164,4 +172,40 @@ func svrFile(name string) http.HandlerFunc {
 		http.ServeFile(w, r, name)
 	}
 
+}
+
+func HandleWhiteBoard(pattern, dir string) {
+	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+
+		var _url = r.URL.Path
+		if _url == pattern {
+			//创建白板name
+			ck := http.Cookie{
+				Name:  "name",
+				Value: utils.NewId(),
+			}
+			log.Error("HandleWhiteBoard")
+			http.SetCookie(w, &ck)
+		}
+		dirHandler(pattern, dir)(w, r)
+	})
+
+}
+func dirHandler(pattern, dir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var _url = r.URL.Path
+
+		var file = strings.Replace(_url, pattern, dir, 1)
+		if file == _url {
+			log.Errorf("not math dir")
+			//不是相对于dir的url,在程序当前目录找
+			file = fmt.Sprintf(".%s", _url)
+		}
+
+		log.Errorf("HandleDir:r.RequestURI:%s,%#v,file:%s", r.RequestURI, r.URL, file)
+		http.ServeFile(w, r, file)
+	}
+}
+func HandleDir(pattern, dir string) {
+	mux.HandleFunc(pattern, dirHandler(pattern, dir))
 }

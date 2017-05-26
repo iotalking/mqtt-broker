@@ -3,12 +3,12 @@
   <title>test Ws mqtt.js</title>
 </head>
 <body>
-<script src="./client/browserMqtt.js"></script>
+<script src="../libs/mqtt.min.js"></script>
 <div id=msg />
 <script>
   var msg = document.getElementById('msg');
   msg.innerText = "hello"
-  var client = mqtt.connect("ws://localhost:8083/mqtt") // you add a ws:// url here
+  var client = mqtt.connect(`ws://${window.location.hostname}:8083/mqtt`) // you add a ws:// url here
   client.subscribe("mqtt/demo")
   client.subscribe("presence")
  

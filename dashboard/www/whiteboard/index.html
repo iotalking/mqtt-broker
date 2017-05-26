@@ -1,0 +1,188 @@
+<html>
+
+	<head>
+		<meta charset="utf-8" />
+		<title>白板</title>
+		<script src="../libs/vue.min.js"></script>
+		<script src="../libs/mqtt.min.js"></script>
+	</head>
+
+	<body style="padding: 0;margin: 0;">
+		<div id="app">
+			<canvas v-show="client != null" ref="canvas" v-on:mouseDown="canMouseDown" v-on:mouseMove="canMouseMove" v-on:mouseUp="canMouseUp" class="canvas">
+			</canvas>
+			<img v-show="client != null" v-on:click="disconnect" style="border-radius: 100%;width: 32px;position: absolute;right: 0;" src="img/exit.png"></img>
+			<div v-show="client != null" style="text-align: center;">
+				<span v-text=`房间:${boardName}`></span>
+			</div>
+
+		</div>
+		<style type="text/css">
+			.canvas {
+				position: absolute;
+				width: 100%;
+				height: 100%;
+				overflow: hidden;
+			}
+		</style>
+	</body>
+	<script type="text/javascript">
+		var app = new Vue({
+			el: '#app',
+			data: {
+				boardShow: false,
+				boardName: "hello",
+				client: null,
+			},
+			mounted: function() {
+				var canvas = this.$refs.canvas;
+				canvas.width = window.innerWidth;
+				canvas.height = window.innerHeight;
+				//如果没有hash.name，则从cookie中读取name,并个性hash
+				var reg = /name=(\w+)/;
+				if(location.hash == ""){
+					m = document.cookie.match(reg)
+					location.hash = document.cookie;
+				}else{
+					m = location.hash.match(reg)
+				}
+				if(m){
+					this.boardName = m[1];
+				}
+				this.clearBoard();
+				this.connect();
+			},
+			mouseDown: false,
+
+			methods: {
+				getDataTopic: function() {
+					return `deamo/board/${this.boardName}/data`;
+				},
+				connect: function() {
+					if(this.client) {
+						return;
+					}
+					var hostname = location.hostname;
+					var client = mqtt.connect('ws://' + hostname + ':8083/mqtt');
+					var comp = this;
+					this.client = client;
+					client = null;
+					this.client.on('connect', function() {
+						comp.client.subscribe(comp.getDataTopic())
+						comp.client.on('message', function(topic, payload) {
+							if(topic == comp.getDataTopic()) {
+								var data = JSON.parse(payload);
+								switch(data.mouse.action) {
+									case "down":
+										comp.drawDown(data.mouse.x, data.mouse.y);
+										break;
+									case "move":
+										comp.drawMove(data.mouse.x, data.mouse.y);
+										break;
+									case "up":
+										comp.drawUp(data.mouse.x, data.mouse.y);
+								}
+							}
+						});
+					});
+
+				},
+				disconnect: function() {
+					if(!this.client) {
+						return;
+					}
+					if(this.client.disconnecting) {
+						return;
+					}
+					this.client.end();
+					this.client = null;
+				},
+				publish: function(data) {
+					if(this.client && this.client.connected) {
+						this.client.publish(this.getDataTopic(), JSON.stringify(data));
+					}
+				},
+				ctx: function() {
+					return this.$refs.canvas.getContext('2d');
+				},
+				clearBoard: function() {
+					var ctx = this.ctx();
+					var canvas = this.$refs.canvas;
+					ctx.clearRect(0, 0, canvas.width, canvas.height);
+				},
+				
+				drawDown: function(x, y) {
+					var ctx = this.ctx();
+					ctx.beginPath();
+					ctx.moveTo(x, y);
+				},
+				drawMove: function(x, y) {
+					var ctx = this.ctx();
+					ctx.lineTo(x, y);
+					ctx.stroke();
+				},
+				drawUp: function(x, y) {
+					var ctx = this.ctx();
+
+				},
+				canMouseDown: function(e) {
+					this.mouseDown = true;
+					if(!this.client) {
+						return;
+					}
+					var canvas = this.$refs.canvas;
+					var x = e.x,
+						y = e.y;
+					x -= canvas.offsetLeft;
+					y -= canvas.offsetTop;
+
+					this.publish({
+						mouse: {
+							action: 'down',
+							x: x,
+							y: y,
+						}
+
+					});
+				},
+
+				canMouseMove: function(e) {
+					if(!this.client || !this.mouseDown) {
+						return;
+					}
+					var canvas = this.$refs.canvas;
+					var x = e.x,
+						y = e.y;
+					x -= canvas.offsetLeft;
+					y -= canvas.offsetTop;
+					this.publish({
+						mouse: {
+							action: 'move',
+							x: x,
+							y: y,
+						}
+					});
+				},
+				canMouseUp: function(e) {
+					this.mouseDown = false;
+					if(!this.client) {
+						return;
+					}
+					var canvas = this.$refs.canvas;
+					var x = e.x,
+						y = e.y;
+					x -= canvas.offsetLeft;
+					y -= canvas.offsetTop;
+					this.publish({
+						mouse: {
+							action: 'up',
+							x: e.x,
+							y: e.y,
+						}
+					});
+				},
+			}
+		})
+	</script>
+
+</html>
