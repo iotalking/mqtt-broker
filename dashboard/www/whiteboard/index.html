@@ -9,7 +9,7 @@
 
 	<body style="padding: 0;margin: 0;">
 		<div id="app">
-			<canvas v-show="client != null" ref="canvas" v-on:mouseDown="canMouseDown" v-on:mouseMove="canMouseMove" v-on:mouseUp="canMouseUp" class="canvas">
+			<canvas v-show="client != null" ref="canvas" v-on:mouseDown="canMouseDown" v-on:mouseMove="canMouseMove" v-on:mouseUp="canMouseUp" v-on:touchstart="canTouchStart" v-on:touchmove="canTouchMove" v-on:touchend="canTouchEnd"  class="canvas">
 			</canvas>
 			<img v-show="client != null" v-on:click="disconnect" style="border-radius: 100%;width: 32px;position: absolute;right: 0;" src="img/exit.png"></img>
 			<div v-show="client != null" style="text-align: center;">
@@ -33,6 +33,8 @@
 				boardShow: false,
 				boardName: "hello",
 				client: null,
+				x:0,
+				y:0,
 			},
 			mounted: function() {
 				var canvas = this.$refs.canvas;
@@ -125,6 +127,24 @@
 					var ctx = this.ctx();
 
 				},
+				canTouchStart:function(e){
+					this.canMouseDown({
+						x:e.touches[0].clientX,
+						y:e.touches[0].clientY,
+					});
+				},
+				canTouchMove:function(e){
+					this.canMouseMove({
+						x:e.touches[0].clientX,
+						y:e.touches[0].clientY,
+					});
+				},
+				canTouchEnd:function(e){
+					this.canMouseUp({
+						x:this.x,
+						y:this.y,
+					});
+				},
 				canMouseDown: function(e) {
 					this.mouseDown = true;
 					if(!this.client) {
@@ -144,6 +164,8 @@
 						}
 
 					});
+					this.x = x;
+					this.y = y;
 				},
 
 				canMouseMove: function(e) {
@@ -162,6 +184,8 @@
 							y: y,
 						}
 					});
+					this.x = x;
+					this.y = y;
 				},
 				canMouseUp: function(e) {
 					this.mouseDown = false;
