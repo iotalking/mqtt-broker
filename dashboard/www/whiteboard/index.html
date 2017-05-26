@@ -43,6 +43,8 @@
 				//如果没有hash.name，则从cookie中读取name,并个性hash
 				var reg = /name=(\w+)/;
 				if(location.hash == ""){
+					//owner身份进来
+					this.isOwner = true;
 					m = document.cookie.match(reg)
 				}else{
 					m = location.hash.match(reg)
@@ -60,6 +62,18 @@
 				getDataTopic: function() {
 					return `deamo/board/${this.boardName}/data`;
 				},
+				getNewUserTopic:function(){
+					return `deamo/board/${this.boardName}/newuser`;	
+				},
+				getImageTopic:function(clientId){
+					return `deamo/board/${this.boardName}/image/${clientId}`;	
+				},
+				clientId:function(){
+					if(!this.client){
+						return "";
+					}
+					return this.client.options.clientId;
+				},
 				connect: function() {
 					if(this.client) {
 						return;
@@ -70,7 +84,19 @@
 					this.client = client;
 					client = null;
 					this.client.on('connect', function() {
-						comp.client.subscribe(comp.getDataTopic())
+						//订阅笔迹数据
+						comp.client.subscribe(comp.getDataTopic());
+						//订阅白板历史图像
+						comp.client.subscribe(comp.getImageTopic(comp.clientId()));
+						//订阅新用户进来
+						if(comp.isOwner == true){
+							comp.client.subscribe(comp.getNewUserTopic());
+						}else{
+							//从owner处获取历史数据
+							comp.client.publish(comp.getNewUserTopic(),comp.clientId());
+						}
+						
+						
 						comp.client.on('message', function(topic, payload) {
 							if(topic == comp.getDataTopic()) {
 								var data = JSON.parse(payload);
@@ -84,10 +110,31 @@
 									case "up":
 										comp.drawUp(data.mouse.x, data.mouse.y);
 								}
+							}else if(topic == comp.getImageTopic(comp.clientId())){
+								console.log(topic);
+								comp.drawImage(payload.toString());
+							}else if(topic == comp.getNewUserTopic()){
+								console.log(topic);
+								comp.publishImage(payload.toString());
 							}
 						});
 					});
 
+				},
+				drawImage:function(dataUrl){
+					if(!this.client) {
+						return;
+					}
+					var img = document.createElement('img');
+					var ctx = this.ctx();
+					img.onload = function(){
+						ctx.drawImage(img,0,0);
+						img = null;
+						ctx = null;
+					}
+					img.src = dataUrl;
+					
+					
 				},
 				disconnect: function() {
 					if(!this.client) {
@@ -102,6 +149,12 @@
 				publish: function(data) {
 					if(this.client && this.client.connected) {
 						this.client.publish(this.getDataTopic(), JSON.stringify(data));
+					}
+				},
+				publishImage:function(clientId){
+					if(this.client && this.client.connected) {
+						var canvas = this.$refs.canvas;
+						this.client.publish(this.getImageTopic(clientId),canvas.toDataURL());
 					}
 				},
 				ctx: function() {
