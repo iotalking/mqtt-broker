@@ -143,18 +143,22 @@
 					this.users = [];
 				},
 				onConnect: function() {
-					//订阅笔迹数据
-					this.client.subscribe(this.DataTopic());
-					//订阅白板历史图像
-					this.client.subscribe(this.ImageTopic(this.clientId()));
-					//订阅用户sayhello
-					this.client.subscribe(this.ComingTopic());
-					//订阅别人向自己sayhello的应答
-					this.client.subscribe(this.SayHelloTopic())
-					//订阅用户下线
-					this.client.subscribe(this.SayByeTopic());
-					//订阅请求历史图像
-					this.client.subscribe(this.HistoryTopic(this.clientId()));
+					
+					this.client.subscribe(
+						[
+						//订阅笔迹数据
+						this.DataTopic(),
+						//订阅用户上线
+						this.ComingTopic(),
+						//订阅用户sayhello
+						this.SayHelloTopic(),
+						//订阅用户离开
+						this.SayByeTopic(),
+						//订阅历史数据
+						this.HistoryTopic(this.clientId()),
+						//订阅白板历史图像
+						this.ImageTopic(this.clientId())
+						]);
 
 					this.client.on('message', function(topic, payload) {
 						app.onMessage(topic, payload);
