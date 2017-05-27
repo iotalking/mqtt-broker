@@ -11,7 +11,7 @@
 		<div id="app">
 			<canvas v-show="client != null" ref="canvas" v-on:mouseDown="canMouseDown" v-on:mouseMove="canMouseMove" v-on:mouseUp="canMouseUp" v-on:touchstart="canTouchStart" v-on:touchmove="canTouchMove" v-on:touchend="canTouchEnd" class="canvas">
 			</canvas>
-			<img v-show="client != null" v-on:click="disconnect" style="border-radius: 100%;width: 32px;position: absolute;right: 0;" src="img/exit.png"></img>
+			<img v-show="client != null" v-on:click="onClear" style="border-radius: 100%;width: 64px;position: absolute;right: 0;" src="img/Clear.png"></img>
 			<div v-show="client != null" style="text-align: center;">
 				<span v-text=`房间:${boardName},用户数:${userCount}`></span>
 			</div>
@@ -119,15 +119,19 @@
 				},
 				onTopicData: function(payload) {
 					var data = JSON.parse(payload);
-					switch(data.mouse.action) {
-						case "down":
-							this.drawDown(data.mouse.x, data.mouse.y);
+					switch(data.action) {
+						case "mousedown":
+							this.onActionDown(data.x, data.y);
 							break;
-						case "move":
-							this.drawMove(data.mouse.x, data.mouse.y);
+						case "mousemove":
+							this.onActionMove(data.x, data.y);
 							break;
-						case "up":
-							this.drawUp(data.mouse.x, data.mouse.y);
+						case "mouseup":
+							this.onActionUp(data.x, data.y);
+							break;
+						case "clearboard":
+							this.onActionClear();
+							break;
 					}
 				},
 				onTopicImage: function(payload) {
@@ -226,6 +230,11 @@
 					this.client.end();
 					this.client = null;
 				},
+				onClear:function(){
+					this.publish({
+						action:'clearboard',
+					});
+				},
 				publish: function(data) {
 					if(this.client && this.client.connected) {
 						this.client.publish(this.DataTopic(), JSON.stringify(data));
@@ -246,19 +255,22 @@
 					ctx.clearRect(0, 0, canvas.width, canvas.height);
 				},
 
-				drawDown: function(x, y) {
+				onActionDown: function(x, y) {
 					var ctx = this.ctx();
 					ctx.beginPath();
 					ctx.moveTo(x, y);
 				},
-				drawMove: function(x, y) {
+				onActionMove: function(x, y) {
 					var ctx = this.ctx();
 					ctx.lineTo(x, y);
 					ctx.stroke();
 				},
-				drawUp: function(x, y) {
+				onActionUp: function(x, y) {
 					var ctx = this.ctx();
 
+				},
+				onActionClear:function(){
+					this.clearBoard();
 				},
 				canTouchStart: function(e) {
 					this.canMouseDown({
@@ -290,12 +302,9 @@
 					y -= canvas.offsetTop;
 
 					this.publish({
-						mouse: {
-							action: 'down',
-							x: x,
-							y: y,
-						}
-
+						action: 'mousedown',
+						x: x,
+						y: y,
 					});
 					this.x = x;
 					this.y = y;
@@ -311,11 +320,9 @@
 					x -= canvas.offsetLeft;
 					y -= canvas.offsetTop;
 					this.publish({
-						mouse: {
-							action: 'move',
-							x: x,
-							y: y,
-						}
+						action: 'mousemove',
+						x: x,
+						y: y,
 					});
 					this.x = x;
 					this.y = y;
@@ -331,11 +338,9 @@
 					x -= canvas.offsetLeft;
 					y -= canvas.offsetTop;
 					this.publish({
-						mouse: {
-							action: 'up',
-							x: e.x,
-							y: e.y,
-						}
+						action: 'mouseup',
+						x: e.x,
+						y: e.y,
 					});
 				},
 			}
