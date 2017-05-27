@@ -134,6 +134,7 @@ func (this *Session) broadcastSessionInfo() {
 	return
 }
 
+//要除自己之外的所有订阅者
 func (this *Session) sendToSubcriber(msg *packets.PublishPacket) error {
 	log.Debug("sendToSubcriber")
 	subMgr := this.mgr.GetSubscriptionMgr()
@@ -150,7 +151,7 @@ func (this *Session) sendToSubcriber(msg *packets.PublishPacket) error {
 	msg.Retain = false
 	for v, qos := range sessionQosMap {
 		s := v.(*Session)
-		if s.IsConnected() && !s.IsClosed() {
+		if s != this && s.IsConnected() && !s.IsClosed() {
 			nmsg := msg.Copy()
 			//qos取订阅和原消息的最小值
 			if qos < msg.Qos {
