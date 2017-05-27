@@ -30,6 +30,7 @@
 		var app = new Vue({
 			el: '#app',
 			data: {
+				clientId:'board_' + Math.random().toString(16).substr(2, 8),
 				boardShow: false,
 				boardName: "hello",
 				client: null,
@@ -62,7 +63,7 @@
 			mouseDown: false,
 			destroyed: function() {
 				if(this.client && this.connected) {
-					this.client.publish(this.SayByeTopic(), this.clientId());
+					this.client.publish(this.SayByeTopic(), this.clientId);
 					this.client.disconnect();
 				}
 			},
@@ -71,10 +72,10 @@
 					return `deamo/board/${this.boardName}/data`;
 				},
 				SayHelloTopic: function(clientId) {
-					return `deamo/board/${this.boardName}/sayhello`;
+					return `deamo/board/${this.boardName}/sayhello/${clientId}`;
 				},
 				SayByeTopic: function() {
-					return `deamo/board/${this.boardName}/saybyte`;
+					return `deamo/board/${this.boardName}/saybye`;
 				},
 				ImageTopic: function(clientId) {
 					return `deamo/board/${this.boardName}/image/${clientId}`;
@@ -91,10 +92,12 @@
 				},
 				onTopicComing: function(clientId) {
 					console.log(clientId, " coming");
-					this.client.publish(this.SayHelloTopic(), this.clientId());
-					this.userCount = 2;
-					this.users = {};
+					this.client.publish(this.SayHelloTopic(clientId), this.clientId);
 					this.users[clientId] = 1;
+					this.userCount = 1;
+					for(var u in this.users) {
+						this.userCount++;
+					}
 				},
 				//向一个sayhello的用户请求历史图片
 				onTopicSayHello: function(payload) {
@@ -102,7 +105,7 @@
 					console.log("from:", clientId);
 					if(!(clientId in this.users)) {
 						//请clientId请求历史图片
-						this.client.publish(this.HistoryTopic(clientId), this.clientId());
+						this.client.publish(this.HistoryTopic(clientId), this.clientId);
 					}
 					this.users[clientId] = 1;
 					this.userCount = 1;
@@ -138,12 +141,6 @@
 				onTopicImage: function(payload) {
 					this.drawImage(payload.toString());
 				},
-				clientId: function() {
-					if(!this.client) {
-						return "";
-					}
-					return this.client.options.clientId;
-				},
 				onOffline: function() {
 					this.users = [];
 				},
@@ -156,13 +153,13 @@
 						//订阅用户上线
 						this.ComingTopic(),
 						//订阅用户sayhello
-						this.SayHelloTopic(),
+						this.SayHelloTopic(this.clientId),
 						//订阅用户离开
 						this.SayByeTopic(),
 						//订阅历史数据
-						this.HistoryTopic(this.clientId()),
+						this.HistoryTopic(this.clientId),
 						//订阅白板历史图像
-						this.ImageTopic(this.clientId())
+						this.ImageTopic(this.clientId)
 						]);
 
 					this.client.on('message', function(topic, payload) {
@@ -171,7 +168,7 @@
 					this.client.on('offline', this.onOffline);
 
 					//向所有用户sayhello
-					this.client.publish(this.ComingTopic(), this.clientId());
+					this.client.publish(this.ComingTopic(), this.clientId);
 
 				},
 				onMessage: function(topic, payload) {
@@ -180,16 +177,14 @@
 						this.onTopicData(payload);
 					} else if(topic == this.ComingTopic()) {
 						var clientId = payload.toString();
-						if(clientId == this.clientId()) {
-							//自己也会收到自己的coming
-							return;
-						}
 						this.onTopicComing(clientId);
-					} else if(topic == this.HistoryTopic(this.clientId())) {
+					} else if(topic == this.SayByeTopic()) {
+						this.onTopicSayBye(payload);
+					} else if(topic == this.HistoryTopic(this.clientId)) {
 						this.onTopicHistory(payload);
-					} else if(topic == this.SayHelloTopic()) {
+					} else if(topic == this.SayHelloTopic(this.clientId)) {
 						this.onTopicSayHello(payload);
-					} else if(topic == this.ImageTopic(this.clientId())) {
+					} else if(topic == this.ImageTopic(this.clientId)) {
 						this.onTopicImage(payload);
 					}
 				},
@@ -199,7 +194,16 @@
 						return;
 					}
 					var hostname = location.hostname;
-					var client = mqtt.connect('ws://' + hostname + ':8083/mqtt');
+					var client = mqtt.connect('ws://' + hostname + ':8083/mqtt',{
+						clientId:this.clientId,
+						will:{
+							//自己断线时通知其它用户
+							topic:this.SayByeTopic(),
+							payload:this.clientId,
+							qos:2,
+							retain:false,
+						}
+					});
 					this.client = client;
 					client = null;
 
@@ -238,7 +242,7 @@
 					this.onActionClear();
 				},
 				publish: function(data) {
-					data.clientId = this.clientId();
+					data.clientId = this.clientId;
 					if(this.client && this.client.connected) {
 						this.client.publish(this.DataTopic(), JSON.stringify(data));
 					}
@@ -315,7 +319,7 @@
 						y: y,
 					});
 					this.onActionDown({
-						clientId:this.clientId(),
+						clientId:this.clientId,
 						x:x,
 						y:y,
 					});
@@ -336,7 +340,7 @@
 						y: y,
 					});
 					this.onActionMove({
-						clientId:this.clientId(),
+						clientId:this.clientId,
 						x:x,
 						y:y,
 					});
@@ -357,7 +361,7 @@
 						y: e.y,
 					});
 					this.onActionUp({
-						clientId:this.clientId(),
+						clientId:this.clientId,
 						x:x,
 						y:y,
 					});
