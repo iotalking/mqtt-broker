@@ -9,11 +9,11 @@
 
 	<body style="padding: 0;margin: 0;">
 		<div id="app">
-			<canvas v-show="client != null" ref="canvas" v-on:mouseDown="canMouseDown" v-on:mouseMove="canMouseMove" v-on:mouseUp="canMouseUp" v-on:touchstart="canTouchStart" v-on:touchmove="canTouchMove" v-on:touchend="canTouchEnd"  class="canvas">
+			<canvas v-show="client != null" ref="canvas" v-on:mouseDown="canMouseDown" v-on:mouseMove="canMouseMove" v-on:mouseUp="canMouseUp" v-on:touchstart="canTouchStart" v-on:touchmove="canTouchMove" v-on:touchend="canTouchEnd" class="canvas">
 			</canvas>
 			<img v-show="client != null" v-on:click="disconnect" style="border-radius: 100%;width: 32px;position: absolute;right: 0;" src="img/exit.png"></img>
 			<div v-show="client != null" style="text-align: center;">
-				<span v-text=`房间:${boardName}`></span>
+				<span v-text=`房间:${boardName},用户数:${userCount}`></span>
 			</div>
 
 		</div>
@@ -33,8 +33,11 @@
 				boardShow: false,
 				boardName: "hello",
 				client: null,
-				x:0,
-				y:0,
+				x: 0,
+				y: 0,
+				userCount: 1,
+				//存储用户id
+				users: {},
 			},
 			mounted: function() {
 				var canvas = this.$refs.canvas;
@@ -42,14 +45,14 @@
 				canvas.height = window.innerHeight;
 				//如果没有hash.name，则从cookie中读取name,并个性hash
 				var reg = /name=(\w+)/;
-				if(location.hash == ""){
+				if(location.hash == "") {
 					//owner身份进来
 					this.isOwner = true;
 					m = document.cookie.match(reg)
-				}else{
+				} else {
 					m = location.hash.match(reg)
 				}
-				if(m){
+				if(m) {
 					this.boardName = m[1];
 					location.hash = `name=${this.boardName}`;
 				}
@@ -57,84 +60,157 @@
 				this.connect();
 			},
 			mouseDown: false,
-
+			destroyed: function() {
+				if(this.client && this.connected) {
+					this.client.publish(this.SayByeTopic(), this.clientId());
+					this.client.disconnect();
+				}
+			},
 			methods: {
-				getDataTopic: function() {
+				DataTopic: function() {
 					return `deamo/board/${this.boardName}/data`;
 				},
-				getNewUserTopic:function(){
-					return `deamo/board/${this.boardName}/newuser`;	
+				SayHelloTopic: function(clientId) {
+					return `deamo/board/${this.boardName}/sayhello`;
 				},
-				getImageTopic:function(clientId){
-					return `deamo/board/${this.boardName}/image/${clientId}`;	
+				SayByeTopic: function() {
+					return `deamo/board/${this.boardName}/saybyte`;
 				},
-				clientId:function(){
-					if(!this.client){
+				ImageTopic: function(clientId) {
+					return `deamo/board/${this.boardName}/image/${clientId}`;
+				},
+				HistoryTopic: function(clientId) {
+					return `deamo/board/${this.boardName}/history/${clientId}`;
+				},
+				ComingTopic: function() {
+					return `deamo/board/${this.boardName}/coming`;
+				},
+				onTopicHistory: function(payload) {
+					var clientId = payload.toString()
+					this.publishImage(clientId);
+				},
+				onTopicComing: function(clientId) {
+					console.log(clientId, " coming");
+					this.client.publish(this.SayHelloTopic(), this.clientId());
+					this.userCount = 1;
+					this.users = {};
+				},
+				//向一个sayhello的用户请求历史图片
+				onTopicSayHello: function(payload) {
+					var clientId = payload.toString();
+					console.log("from:", clientId);
+					if(!(clientId in this.users)) {
+						//请clientId请求历史图片
+						this.client.publish(this.HistoryTopic(clientId), this.clientId());
+					}
+					this.users[clientId] = 1;
+					this.userCount = 1;
+					for(var u in this.users) {
+						this.userCount++;
+					}
+				},
+				onTopicSayBye: function(payload) {
+					var clientId = payload.toString();
+					delete this.users[clientId];
+					this.userCount = 1;
+					for(var u in this.users) {
+						this.userCount++;
+					}
+				},
+				onTopicData: function(payload) {
+					var data = JSON.parse(payload);
+					switch(data.mouse.action) {
+						case "down":
+							this.drawDown(data.mouse.x, data.mouse.y);
+							break;
+						case "move":
+							this.drawMove(data.mouse.x, data.mouse.y);
+							break;
+						case "up":
+							this.drawUp(data.mouse.x, data.mouse.y);
+					}
+				},
+				onTopicImage: function(payload) {
+					this.drawImage(payload.toString());
+				},
+				clientId: function() {
+					if(!this.client) {
 						return "";
 					}
 					return this.client.options.clientId;
 				},
+				onOffline: function() {
+					this.users = [];
+				},
+				onConnect: function() {
+					//订阅笔迹数据
+					this.client.subscribe(this.DataTopic());
+					//订阅白板历史图像
+					this.client.subscribe(this.ImageTopic(this.clientId()));
+					//订阅用户sayhello
+					this.client.subscribe(this.ComingTopic());
+					//订阅别人向自己sayhello的应答
+					this.client.subscribe(this.SayHelloTopic())
+					//订阅用户下线
+					this.client.subscribe(this.SayByeTopic());
+					//订阅请求历史图像
+					this.client.subscribe(this.HistoryTopic(this.clientId()));
+
+					this.client.on('message', function(topic, payload) {
+						app.onMessage(topic, payload);
+					});
+					this.client.on('offline', this.onOffline);
+
+					//向所有用户sayhello
+					this.client.publish(this.ComingTopic(), this.clientId());
+
+				},
+				onMessage: function(topic, payload) {
+					console.log(topic);
+					if(topic == this.DataTopic()) {
+						this.onTopicData(payload);
+					} else if(topic == this.ComingTopic()) {
+						var clientId = payload.toString();
+						if(clientId == this.clientId()) {
+							//自己也会收到自己的coming
+							return;
+						}
+						this.onTopicComing(clientId);
+					} else if(topic == this.HistoryTopic(this.clientId())) {
+						this.onTopicHistory(payload);
+					} else if(topic == this.SayHelloTopic()) {
+						this.onTopicSayHello(payload);
+					} else if(topic == this.ImageTopic(this.clientId())) {
+						this.onTopicImage(payload);
+					}
+				},
+
 				connect: function() {
 					if(this.client) {
 						return;
 					}
 					var hostname = location.hostname;
 					var client = mqtt.connect('ws://' + hostname + ':8083/mqtt');
-					var comp = this;
 					this.client = client;
 					client = null;
-					this.client.on('connect', function() {
-						//订阅笔迹数据
-						comp.client.subscribe(comp.getDataTopic());
-						//订阅白板历史图像
-						comp.client.subscribe(comp.getImageTopic(comp.clientId()));
-						//订阅新用户进来
-						if(comp.isOwner == true){
-							comp.client.subscribe(comp.getNewUserTopic());
-						}else{
-							//从owner处获取历史数据
-							comp.client.publish(comp.getNewUserTopic(),comp.clientId());
-						}
-						
-						
-						comp.client.on('message', function(topic, payload) {
-							if(topic == comp.getDataTopic()) {
-								var data = JSON.parse(payload);
-								switch(data.mouse.action) {
-									case "down":
-										comp.drawDown(data.mouse.x, data.mouse.y);
-										break;
-									case "move":
-										comp.drawMove(data.mouse.x, data.mouse.y);
-										break;
-									case "up":
-										comp.drawUp(data.mouse.x, data.mouse.y);
-								}
-							}else if(topic == comp.getImageTopic(comp.clientId())){
-								console.log(topic);
-								comp.drawImage(payload.toString());
-							}else if(topic == comp.getNewUserTopic()){
-								console.log(topic);
-								comp.publishImage(payload.toString());
-							}
-						});
-					});
 
+					this.client.on('connect', function() {
+						app.onConnect();
+					});
 				},
-				drawImage:function(dataUrl){
+				drawImage: function(dataUrl) {
 					if(!this.client) {
 						return;
 					}
 					var img = document.createElement('img');
 					var ctx = this.ctx();
-					img.onload = function(){
-						ctx.drawImage(img,0,0);
+					img.onload = function() {
+						ctx.drawImage(img, 0, 0);
 						img = null;
 						ctx = null;
 					}
 					img.src = dataUrl;
-					
-					
+
 				},
 				disconnect: function() {
 					if(!this.client) {
@@ -148,13 +224,13 @@
 				},
 				publish: function(data) {
 					if(this.client && this.client.connected) {
-						this.client.publish(this.getDataTopic(), JSON.stringify(data));
+						this.client.publish(this.DataTopic(), JSON.stringify(data));
 					}
 				},
-				publishImage:function(clientId){
+				publishImage: function(clientId) {
 					if(this.client && this.client.connected) {
 						var canvas = this.$refs.canvas;
-						this.client.publish(this.getImageTopic(clientId),canvas.toDataURL());
+						this.client.publish(this.ImageTopic(clientId), canvas.toDataURL());
 					}
 				},
 				ctx: function() {
@@ -165,7 +241,7 @@
 					var canvas = this.$refs.canvas;
 					ctx.clearRect(0, 0, canvas.width, canvas.height);
 				},
-				
+
 				drawDown: function(x, y) {
 					var ctx = this.ctx();
 					ctx.beginPath();
@@ -180,22 +256,22 @@
 					var ctx = this.ctx();
 
 				},
-				canTouchStart:function(e){
+				canTouchStart: function(e) {
 					this.canMouseDown({
-						x:e.touches[0].clientX,
-						y:e.touches[0].clientY,
+						x: e.touches[0].clientX,
+						y: e.touches[0].clientY,
 					});
 				},
-				canTouchMove:function(e){
+				canTouchMove: function(e) {
 					this.canMouseMove({
-						x:e.touches[0].clientX,
-						y:e.touches[0].clientY,
+						x: e.touches[0].clientX,
+						y: e.touches[0].clientY,
 					});
 				},
-				canTouchEnd:function(e){
+				canTouchEnd: function(e) {
 					this.canMouseUp({
-						x:this.x,
-						y:this.y,
+						x: this.x,
+						y: this.y,
 					});
 				},
 				canMouseDown: function(e) {
