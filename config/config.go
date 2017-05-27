@@ -21,6 +21,9 @@ var KeyFileName = "./mqttdebug.key"
 //pprof查看端口,url ip:port/debug/pprof
 var PprofPort = 6060
 
+//web server for some html page
+var WebPort = 8080
+
 //restful api port,url base:  ip:port/dashboard
 var RestfulPort = 8081
 

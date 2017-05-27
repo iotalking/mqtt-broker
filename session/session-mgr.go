@@ -24,9 +24,15 @@ type SessionMgr interface {
 	OnDisconnected(session *Session)
 	DisconectSessionByClientId(clientId string)
 	GetSubscriptionMgr() topic.SubscriptionMgr
-	GetSessions() dashboard.SessionList
+	GetSessions() SessionList
 	GetStoreMgr() store.StoreMgr
 }
+
+type SessionList struct {
+	Active   []string
+	Inactive []string
+}
+
 type sessionMgr struct {
 	//主runtine
 	runtine *runtine.SafeRuntine
@@ -57,7 +63,7 @@ type sessionMgr struct {
 
 	getSessionsChan chan byte
 	//返回json的active session和inactive session的clientId列表
-	getSessionsResultChan chan dashboard.SessionList
+	getSessionsResultChan chan SessionList
 
 	getActiveSessionsChan       chan byte
 	getActiveSessionsResultChan chan []*Session
@@ -89,7 +95,7 @@ func GetMgr() SessionMgr {
 			pingTimeoutChan:                 make(chan *Session),
 			waitingConnectSessionMap:        make(map[io.ReadWriteCloser]*Session),
 			getSessionsChan:                 make(chan byte),
-			getSessionsResultChan:           make(chan dashboard.SessionList),
+			getSessionsResultChan:           make(chan SessionList),
 			getActiveSessionsChan:           make(chan byte),
 			getActiveSessionsResultChan:     make(chan []*Session),
 			getAllSessionChan:               make(chan byte),
@@ -235,7 +241,7 @@ func (this *sessionMgr) run() {
 			}
 		case <-this.getSessionsChan:
 			log.Debug("sessionMgr.getSessionsChan")
-			list := dashboard.SessionList{}
+			list := SessionList{}
 			for _, s := range this.connectedSessionMap {
 				list.Active = append(list.Active, s.clientId)
 			}
@@ -299,7 +305,7 @@ func (this *sessionMgr) OnPingTimeout(session *Session) {
 	this.pingTimeoutChan <- session
 }
 
-func (this *sessionMgr) GetSessions() dashboard.SessionList {
+func (this *sessionMgr) GetSessions() SessionList {
 	log.Debug("sessionMgr.GetSessions")
 	this.getSessionsChan <- 1
 	return <-this.getSessionsResultChan

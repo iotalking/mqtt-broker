@@ -12,10 +12,11 @@ import (
 	log "github.com/Sirupsen/logrus"
 
 	"github.com/iotalking/mqtt-broker/config"
-	"github.com/iotalking/mqtt-broker/dashboard"
+	"github.com/iotalking/mqtt-broker/dashboard/api"
 	"github.com/iotalking/mqtt-broker/network/tcp"
 	"github.com/iotalking/mqtt-broker/network/websocket"
 	"github.com/iotalking/mqtt-broker/session"
+	"github.com/iotalking/mqtt-broker/www"
 
 	"net/http"
 	_ "net/http/pprof"
@@ -101,7 +102,7 @@ func main() {
 	go func() {
 		wg.Done()
 		log.Debug("starting restful api server...")
-		dashboard.Start(fmt.Sprintf(":%d", config.RestfulPort), sessionMgr)
+		api.Start(fmt.Sprintf(":%d", config.RestfulPort), sessionMgr)
 	}()
 
 	wg.Add(1)
@@ -113,6 +114,17 @@ func main() {
 			panic(err)
 		}
 	}()
+
+	wg.Add(1)
+	go func() {
+		wg.Done()
+		log.Debugf("starting www server on:%d ...", config.WebPort)
+		err = www.Start(fmt.Sprintf(":%d", config.WebPort))
+		if err != nil {
+			panic(err)
+		}
+	}()
+
 	wg.Wait()
 	log.Debugln("server running")
 	// Trap SIGINT to trigger a shutdown.

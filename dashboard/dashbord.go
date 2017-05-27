@@ -16,21 +16,3 @@ func (o *AtmI64) Set(v int64) {
 func (o *AtmI64) Get() (v int64) {
 	return atomic.LoadInt64((*int64)(o))
 }
-
-type SessionMgr interface {
-	GetSessions() SessionList
-}
-
-type SessionList struct {
-	Active   []string
-	Inactive []string
-}
-
-var sessionMgr SessionMgr
-
-func Start(addr string, mgr SessionMgr) {
-	sessionMgr = mgr
-	Overview.getChan = make(chan byte)
-	Overview.outChan = make(chan OverviewData)
-	run(addr)
-}

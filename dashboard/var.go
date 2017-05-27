@@ -1,8 +1,6 @@
 package dashboard
 
 import (
-	"time"
-
 	"github.com/iotalking/mqtt-broker/utils"
 )
 
@@ -125,16 +123,10 @@ type OverviewData struct {
 	LastTickerBusyTime AtmI64
 	//定局定时器轮询最大耗时(ns）
 	MaxTickerBusyTime AtmI64
-
-	getChan chan byte
-	outChan chan OverviewData
 }
 
 var Overview = &OverviewData{}
 
-var startTime time.Time
-
 func init() {
-	startTime = time.Now()
 	Overview.BrokerId = utils.LocalId()
 }
