@@ -33,8 +33,8 @@
 				boardShow: false,
 				boardName: "hello",
 				client: null,
-				x: 0,
-				y: 0,
+				x: {},
+				y: {},
 				userCount: 1,
 				//存储用户id
 				users: {},
@@ -92,8 +92,9 @@
 				onTopicComing: function(clientId) {
 					console.log(clientId, " coming");
 					this.client.publish(this.SayHelloTopic(), this.clientId());
-					this.userCount = 1;
+					this.userCount = 2;
 					this.users = {};
+					this.users[clientId] = 1;
 				},
 				//向一个sayhello的用户请求历史图片
 				onTopicSayHello: function(payload) {
@@ -121,13 +122,13 @@
 					var data = JSON.parse(payload);
 					switch(data.action) {
 						case "mousedown":
-							this.onActionDown(data.x, data.y);
+							this.onActionDown(data);
 							break;
 						case "mousemove":
-							this.onActionMove(data.x, data.y);
+							this.onActionMove(data);
 							break;
 						case "mouseup":
-							this.onActionUp(data.x, data.y);
+							this.onActionUp(data);
 							break;
 						case "clearboard":
 							this.onActionClear();
@@ -234,8 +235,10 @@
 					this.publish({
 						action:'clearboard',
 					});
+					this.onActionClear();
 				},
 				publish: function(data) {
+					data.clientId = this.clientId();
 					if(this.client && this.client.connected) {
 						this.client.publish(this.DataTopic(), JSON.stringify(data));
 					}
@@ -255,19 +258,24 @@
 					ctx.clearRect(0, 0, canvas.width, canvas.height);
 				},
 
-				onActionDown: function(x, y) {
+				onActionDown: function(data) {
 					var ctx = this.ctx();
 					ctx.beginPath();
-					ctx.moveTo(x, y);
+					ctx.moveTo(data.x,data.y);
+					this.x[data.clientId] = data.x;
+					this.y[data.clientId] = data.y;
 				},
-				onActionMove: function(x, y) {
+				onActionMove: function(data) {
 					var ctx = this.ctx();
-					ctx.lineTo(x, y);
+					ctx.moveTo(this.x[data.clientId],this.y[data.clientId]);
+					ctx.lineTo(data.x, data.y);
 					ctx.stroke();
+					this.x[data.clientId] = data.x;
+					this.y[data.clientId] = data.y;
 				},
-				onActionUp: function(x, y) {
-					var ctx = this.ctx();
-
+				onActionUp: function(data) {
+					this.x[data.clientId] = data.x;
+					this.y[data.clientId] = data.y;
 				},
 				onActionClear:function(){
 					this.clearBoard();
@@ -308,6 +316,11 @@
 					});
 					this.x = x;
 					this.y = y;
+					this.onActionDown({
+						clientId:this.clientId(),
+						x:x,
+						y:y,
+					});
 				},
 
 				canMouseMove: function(e) {
@@ -326,6 +339,11 @@
 					});
 					this.x = x;
 					this.y = y;
+					this.onActionMove({
+						clientId:this.clientId(),
+						x:x,
+						y:y,
+					});
 				},
 				canMouseUp: function(e) {
 					this.mouseDown = false;
@@ -341,6 +359,13 @@
 						action: 'mouseup',
 						x: e.x,
 						y: e.y,
+					});
+					this.x = x;
+					this.y = y;
+					this.onActionUp({
+						clientId:this.clientId(),
+						x:x,
+						y:y,
 					});
 				},
 			}
