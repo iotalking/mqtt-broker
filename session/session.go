@@ -519,6 +519,7 @@ func (this *Session) removeInflightMsg(msgId uint16) (imsg *inflightingMsg) {
 		}
 		del = false
 		c = true
+		imsg = nil
 		return
 	})
 	return
