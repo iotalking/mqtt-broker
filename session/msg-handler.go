@@ -2,7 +2,6 @@ package session
 
 import (
 	"encoding/json"
-	"fmt"
 	"sync/atomic"
 
 	"github.com/eclipse/paho.mqtt.golang/packets"
@@ -83,10 +82,9 @@ func (this *Session) onConnack(msg *packets.ConnackPacket) error {
 	return nil
 }
 
-func (this *Session) getSessionInfoTopic() string {
-	return fmt.Sprintf("$session/%s/info", this.clientId)
-}
-func (this *Session) broadcastSessionInfo() {
+//由独立的协程调用，注意共享数据访问
+func (this *Session) BroadcastSessionInfo() {
+
 	subMgr := this.mgr.GetSubscriptionMgr()
 	infoTopic := config.SessionInfoTopic(this.clientId)
 	sessionQosMap, err := subMgr.GetSessions(infoTopic)
@@ -98,38 +96,36 @@ func (this *Session) broadcastSessionInfo() {
 		log.Info("sessionQosMap is empty for topic:", infoTopic)
 		return
 	}
-	go func() {
-		nmsg := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
-		var info SessionInfo
-		info.Id = this.clientId
-		info.InflightMsgCnt = this.inflightingList.Len()
-		info.PeddingMsgCnt = this.peddingMsgList.Len()
-		info.SendingMsgCnt = this.channel.iSendList.Len()
-		bs, err := json.MarshalIndent(info, "", "\t")
-		log.Debug("broadcastSessionInfo ", info)
+	nmsg := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+	var info SessionInfo
+	info.Id = this.clientId
+	info.InflightMsgCnt = this.inflightingList.Len()
+	info.PeddingMsgCnt = this.peddingMsgList.Len()
+	info.SendingMsgCnt = this.channel.iSendList.Len()
+	bs, err := json.MarshalIndent(info, "", "\t")
+	log.Debug("broadcastSessionInfo ", info)
 
-		if err != nil {
-			log.Error("broadcastSessionInfo json.MarshalIndent :", err)
-			return
-		}
-		nmsg.Payload = bs
-		//qos取订阅和原消息的最小值
-		nmsg.Qos = 0
+	if err != nil {
+		log.Error("broadcastSessionInfo json.MarshalIndent :", err)
+		return
+	}
+	nmsg.Payload = bs
+	//qos取订阅和原消息的最小值
+	nmsg.Qos = 0
 
-		for v, _ := range sessionQosMap {
-			s := v.(*Session)
-			if s.IsConnected() && !s.IsClosed() {
-				_, err = s.Publish(nmsg)
-				if err != nil {
-					log.Errorf("session[%s].Publish Send error:", s.clientId, err)
-					break
-				}
-			} else {
-				log.Debug("session is disconnected or not connect")
+	for v, _ := range sessionQosMap {
+		s := v.(*Session)
+		if s.IsConnected() && !s.IsClosed() {
+			_, err = s.Publish(nmsg)
+			if err != nil {
+				log.Errorf("session[%s].Publish Send error:", s.clientId, err)
+				break
 			}
-
+		} else {
+			log.Debug("session is disconnected or not connect")
 		}
-	}()
+
+	}
 
 	return
 }

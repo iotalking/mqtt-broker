@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestCopy(t *testing.T) {
 }
 
 func TestOverviewToJson(t *testing.T) {
-
+	Overview.RecvBytesPerSeconds.Set(int64(1000))
 	Overview.RunTimeString.Set("test time")
 	bsjson, err := json.MarshalIndent(&Overview, "", "\t")
 	if err != nil {
@@ -54,4 +55,35 @@ func TestOverviewToJson(t *testing.T) {
 		t.Fatal(`RunTimeString != "test time"`)
 		t.FailNow()
 	}
+	if ov.RecvBytesPerSeconds.Get().(int64) != int64(1000) {
+		t.Fatal(`RecvBytesPerSeconds != 1000:`, ov.RecvBytesPerSeconds)
+		t.FailNow()
+	}
+
+	w := bytes.NewBuffer(nil)
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "\t")
+	encoder.Encode(&Overview)
+
+	if err != nil {
+		t.Fatal("overview data encoder.Encode error:", err)
+		t.FailNow()
+	}
+	r := bytes.NewReader(w.Bytes())
+	decoder := json.NewDecoder(r)
+	var ov2 OverviewData
+	err = decoder.Decode(&ov2)
+	if err != nil {
+		t.Fatal("overview data decoder.Decode error:", err)
+		t.FailNow()
+	}
+	if ov2.RecvBytesPerSeconds.Get().(int64) != int64(1000) {
+		t.Fatal(`RecvBytesPerSeconds != 1000:`, ov.RecvBytesPerSeconds)
+		t.FailNow()
+	}
+	if ov2.RunTimeString.Get().(string) != "test time" {
+		t.Fatalf(`ov2.RunTimeString != "test time":%#v`, ov2)
+		t.FailNow()
+	}
+
 }

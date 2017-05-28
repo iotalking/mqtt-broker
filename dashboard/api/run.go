@@ -92,9 +92,6 @@ func run(addr string) {
 			lastRecvBytes = dashboard.Overview.RecvBytes
 
 			_secondsTimer.Reset(duration)
-		case <-getChan:
-			log.Debug("geting overview data")
-			outChan <- *dashboard.Overview
 		}
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/iotalking/mqtt-broker/config"
 	"github.com/iotalking/mqtt-broker/dashboard"
 	"github.com/iotalking/mqtt-broker/store"
+	"github.com/iotalking/mqtt-broker/utils"
 )
 
 type SessionMgr interface {
@@ -28,6 +29,7 @@ type SessionMgr interface {
 	GetSubscriptionMgr() topic.SubscriptionMgr
 	GetSessions() SessionList
 	GetStoreMgr() store.StoreMgr
+	BroadcastSessionInfo(session *Session)
 }
 
 type SessionList struct {
@@ -79,6 +81,10 @@ type sessionMgr struct {
 	tickerRuntine *runtine.SafeRuntine
 	//处理看板广播的协程
 	overviewRuntine *runtine.SafeRuntine
+	//处理sessionInfo的广播
+	sessionInfoRuntine *runtine.SafeRuntine
+
+	sessionInfoList *utils.List
 
 	storeMgr store.StoreMgr
 }
@@ -105,6 +111,7 @@ func GetMgr() SessionMgr {
 			getAllSessionChan:               make(chan byte),
 			getAllSessionResultChan:         make(chan []*Session),
 			closeSessionChan:                make(chan *Session),
+			sessionInfoList:                 utils.NewList(),
 			storeMgr:                        store.NewStoreMgr(),
 		}
 		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
@@ -137,6 +144,10 @@ func GetMgr() SessionMgr {
 			mgr.overviewRuntine = r
 			mgr.overviewRun()
 		})
+		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
+			mgr.sessionInfoRuntine = r
+			mgr.sessionInfoRun()
+		})
 		gSessionMgr = mgr
 
 	})
@@ -149,6 +160,7 @@ func (this *sessionMgr) Close() {
 		log.Warnf("Close:sessionMgr istoped")
 		return
 	}
+	this.sessionInfoRuntine.Stop()
 	this.overviewRuntine.Stop()
 	this.tickerRuntine.Stop()
 	this.closeSessionRuntine.Stop()
@@ -194,11 +206,15 @@ func (this *sessionMgr) tickerRun() {
 	}
 }
 func (this *sessionMgr) overviewRun() {
+	var startTime = time.Now()
 	for {
 		select {
 		case <-this.overviewRuntine.IsInterrupt:
 			return
 		case <-time.After(config.DashboardUpdateTime):
+			tm := time.Now().Sub(startTime)
+			dashboard.Overview.RunTimeString.Set(tm.String())
+			dashboard.Overview.RunNanoSeconds.Set(tm.Nanoseconds())
 			ov := dashboard.Overview.Copy()
 			bsjson, err := json.Marshal(&ov)
 			if err != nil {
@@ -212,6 +228,24 @@ func (this *sessionMgr) overviewRun() {
 			for k, _ := range sessionMaps {
 				session := k.(*Session)
 				session.Publish(pubmsg)
+			}
+		}
+	}
+}
+
+func (this *sessionMgr) BroadcastSessionInfo(session *Session) {
+	this.sessionInfoList.Push(session)
+}
+func (this *sessionMgr) sessionInfoRun() {
+	for {
+		select {
+		case <-this.overviewRuntine.IsInterrupt:
+			return
+		case <-this.sessionInfoList.Wait():
+			v := this.sessionInfoList.Pop()
+			if v != nil {
+				s := v.(*Session)
+				s.BroadcastSessionInfo()
 			}
 		}
 	}

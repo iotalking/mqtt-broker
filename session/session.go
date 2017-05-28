@@ -463,7 +463,7 @@ func (this *Session) OnTick() {
 	//检测有没有要生发的消息
 	this.checkInflightList()
 	if this.isServer {
-		this.broadcastSessionInfo()
+		this.mgr.BroadcastSessionInfo(this)
 	}
 
 }

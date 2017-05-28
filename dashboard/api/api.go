@@ -18,24 +18,19 @@ func GetOverviewData(w http.ResponseWriter, r *http.Request) {
 	dashboard.Overview.RunTimeString.Set(tm.String())
 	dashboard.Overview.RunNanoSeconds.Set(tm.Nanoseconds())
 	log.Debug("OverviewData.Get")
-	select {
-	case getChan <- 0:
-	default:
-	}
+
 	name := r.FormValue("name")
 
-	encoder := json.NewEncoder(w)
-	encoder.SetIndent("", "\t")
-	d := <-outChan
+	d := dashboard.Overview.Copy()
 	if len(name) > 0 {
 		log.Debug("name = ", name)
 
-		value := reflect.ValueOf(dashboard.Overview).Elem().FieldByName(r.FormValue("name"))
+		value := reflect.ValueOf(d).Elem().FieldByName(r.FormValue("name"))
 		if value.IsValid() {
-
-			encoder.Encode(fmt.Sprintf("%v", value))
-
-			log.Info("OverviewData.Get name=", value)
+			v := value.Addr().Interface().(dashboard.AtmType).Get()
+			sv := fmt.Sprintf("%s", v)
+			log.Info("OverviewData.Get name=", sv)
+			w.Write([]byte(sv))
 			return
 		} else {
 			log.Debug("no field of ", name)
@@ -43,8 +38,11 @@ func GetOverviewData(w http.ResponseWriter, r *http.Request) {
 	} else {
 		log.Debug("name is empty")
 	}
-	encoder.Encode(d)
 
+	//	bsjson, _ = json.MarshalIndent(&d, "", "\t")
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "\t")
+	encoder.Encode(&d)
 }
 
 func SetLogLevel(w http.ResponseWriter, r *http.Request) {
