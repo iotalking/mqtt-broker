@@ -39,8 +39,10 @@
 				userCount: 1,
 				//存储用户id
 				users: {},
+				sentHistoryMsg:false,
 			},
 			mounted: function() {
+				console.log("clientId=",this.clientId);
 				var canvas = this.$refs.canvas;
 				canvas.width = window.innerWidth;
 				canvas.height = window.innerHeight;
@@ -103,7 +105,8 @@
 				onTopicSayHello: function(payload) {
 					var clientId = payload.toString();
 					console.log("from:", clientId);
-					if(!(clientId in this.users)) {
+					if(!this.sentHistoryMsg) {
+						this.sentHistoryMsg = true;
 						//请clientId请求历史图片
 						this.client.publish(this.HistoryTopic(clientId), this.clientId);
 					}
@@ -142,7 +145,8 @@
 					this.drawImage(payload.toString());
 				},
 				onOffline: function() {
-					this.users = [];
+					this.users = {};
+					this.sentHistoryMsg = false;
 				},
 				onConnect: function() {
 					
@@ -289,18 +293,21 @@
 						x: e.touches[0].clientX,
 						y: e.touches[0].clientY,
 					});
+					e.preventDefault();
 				},
 				canTouchMove: function(e) {
 					this.canMouseMove({
 						x: e.touches[0].clientX,
 						y: e.touches[0].clientY,
 					});
+					e.preventDefault();
 				},
 				canTouchEnd: function(e) {
 					this.canMouseUp({
 						x: this.x[this.clientId],
 						y: this.y[this.clientId],
 					});
+					e.preventDefault();
 				},
 				canMouseDown: function(e) {
 					this.mouseDown = true;
@@ -323,6 +330,7 @@
 						x:x,
 						y:y,
 					});
+					e.preventDefault();
 				},
 
 				canMouseMove: function(e) {
@@ -344,6 +352,7 @@
 						x:x,
 						y:y,
 					});
+					e.preventDefault();
 				},
 				canMouseUp: function(e) {
 					this.mouseDown = false;
@@ -365,6 +374,7 @@
 						x:x,
 						y:y,
 					});
+					e.preventDefault();
 				},
 			}
 		})
