@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"io"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/eclipse/paho.mqtt.golang/packets"
 
+	"github.com/iotalking/mqtt-broker/config"
 	"github.com/iotalking/mqtt-broker/dashboard"
 	"github.com/iotalking/mqtt-broker/store"
 )
@@ -75,6 +77,8 @@ type sessionMgr struct {
 	closeSessionChan    chan *Session
 
 	tickerRuntine *runtine.SafeRuntine
+	//处理看板广播的协程
+	overviewRuntine *runtine.SafeRuntine
 
 	storeMgr store.StoreMgr
 }
@@ -129,6 +133,10 @@ func GetMgr() SessionMgr {
 			mgr.tickerRuntine = r
 			mgr.tickerRun()
 		})
+		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
+			mgr.overviewRuntine = r
+			mgr.overviewRun()
+		})
 		gSessionMgr = mgr
 
 	})
@@ -141,6 +149,7 @@ func (this *sessionMgr) Close() {
 		log.Warnf("Close:sessionMgr istoped")
 		return
 	}
+	this.overviewRuntine.Stop()
 	this.tickerRuntine.Stop()
 	this.closeSessionRuntine.Stop()
 	this.runtine.Stop()
@@ -175,7 +184,7 @@ func (this *sessionMgr) tickerRun() {
 			usedNs := time.Now().Sub(preTime).Nanoseconds()
 			d := time.Second - time.Duration(usedNs)
 			log.Info("ontick used:", usedNs)
-			if usedNs > dashboard.Overview.MaxTickerBusyTime.Get() {
+			if usedNs > dashboard.Overview.MaxTickerBusyTime.Get().(int64) {
 				dashboard.Overview.MaxTickerBusyTime.Set(usedNs)
 			}
 			dashboard.Overview.LastTickerBusyTime.Set(usedNs)
@@ -184,6 +193,30 @@ func (this *sessionMgr) tickerRun() {
 
 	}
 }
+func (this *sessionMgr) overviewRun() {
+	for {
+		select {
+		case <-this.overviewRuntine.IsInterrupt:
+			return
+		case <-time.After(config.DashboardUpdateTime):
+			ov := dashboard.Overview.Copy()
+			bsjson, err := json.Marshal(&ov)
+			if err != nil {
+				panic(err)
+			}
+			pubmsg := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+			pubmsg.TopicName = config.OverviewTopic
+			pubmsg.Payload = bsjson
+			pubmsg.Retain = true
+			sessionMaps, _ := this.GetSubscriptionMgr().GetSessions(config.OverviewTopic)
+			for k, _ := range sessionMaps {
+				session := k.(*Session)
+				session.Publish(pubmsg)
+			}
+		}
+	}
+}
+
 func (this *sessionMgr) run() {
 	log.Debug("sessionMgr running...")
 	for {
@@ -208,7 +241,7 @@ func (this *sessionMgr) run() {
 			this.connectedSessionMap[s.clientId] = s
 			dashboard.Overview.ActiveClients.Add(1)
 			dashboard.Overview.InactiveClients.Add(-1)
-			if dashboard.Overview.ActiveClients.Get() > dashboard.Overview.MaxActiveClinets.Get() {
+			if dashboard.Overview.ActiveClients.Get().(int64) > dashboard.Overview.MaxActiveClinets.Get().(int64) {
 				dashboard.Overview.MaxActiveClinets.Set(dashboard.Overview.ActiveClients.Get())
 			}
 		case clientId := <-this.disconnectSessionByClientIdChan:

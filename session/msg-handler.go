@@ -88,7 +88,7 @@ func (this *Session) getSessionInfoTopic() string {
 }
 func (this *Session) broadcastSessionInfo() {
 	subMgr := this.mgr.GetSubscriptionMgr()
-	infoTopic := this.getSessionInfoTopic()
+	infoTopic := config.SessionInfoTopic(this.clientId)
 	sessionQosMap, err := subMgr.GetSessions(infoTopic)
 	if err != nil {
 		log.Error("subMgr.GetSessions error:", err)

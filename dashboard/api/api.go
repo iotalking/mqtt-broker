@@ -15,7 +15,7 @@ import (
 func GetOverviewData(w http.ResponseWriter, r *http.Request) {
 
 	tm := time.Now().Sub(startTime)
-	dashboard.Overview.RunTimeString = tm.String()
+	dashboard.Overview.RunTimeString.Set(tm.String())
 	dashboard.Overview.RunNanoSeconds.Set(tm.Nanoseconds())
 	log.Debug("OverviewData.Get")
 	select {

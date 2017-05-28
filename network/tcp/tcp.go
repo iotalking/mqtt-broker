@@ -16,8 +16,8 @@ func Start(addr string) {
 	if err != nil {
 		panic(err)
 	}
-	if len(dashboard.Overview.BrokerAddress) == 0 {
-		dashboard.Overview.BrokerAddress = listener.Addr().String()
+	if len(dashboard.Overview.BrokerAddress.String()) == 0 {
+		dashboard.Overview.BrokerAddress.Set(listener.Addr().String())
 		log.Info("brokerAddress:", dashboard.Overview.BrokerAddress)
 	}
 	var sessionMgr = session.GetMgr()

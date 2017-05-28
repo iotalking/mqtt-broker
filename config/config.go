@@ -36,17 +36,20 @@ var PingTimeout = 30 * int64(time.Second)
 //客户端用户检测PINGRESP有没有超时接收
 var PingrespTimeout = 45 * int64(time.Second) //1.5 PingTimeout
 
-//发送窗口的大小
-var MaxSizeOfInflight int = 100
-
-//sessionMgr处理新连接的chan缓冲大小
-var MaxSizeOfNewConnectionChan int = 10000
-
 //连接超时时间,秒
 var ConnectTimeout = 10 * int64(time.Second)
 
 //消息发送超时时间
 var SentTimeout = 5 * int64(time.Second)
+
+//看板的数据更新时间
+var DashboardUpdateTime = 3 * time.Second
+
+//发送窗口的大小
+var MaxSizeOfInflight int = 100
+
+//sessionMgr处理新连接的chan缓冲大小
+var MaxSizeOfNewConnectionChan int = 10000
 
 //重发消息的最大次数
 var MaxRetryTimes int = 5

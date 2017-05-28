@@ -1,18 +1,20 @@
 package dashboard
 
 import (
+	"reflect"
+
 	"github.com/iotalking/mqtt-broker/utils"
 )
 
 type OverviewData struct {
 	//总运行时间(纳秒)
 	RunNanoSeconds AtmI64
-	RunTimeString  string
+	RunTimeString  AtmString
 
 	//服务器的唯一标识
-	BrokerId string
+	BrokerId AtmString
 	//服务器的网络地址
-	BrokerAddress string
+	BrokerAddress AtmString
 
 	//总接入消息数
 	RecvMsgCnt AtmI64
@@ -128,5 +130,20 @@ type OverviewData struct {
 var Overview = &OverviewData{}
 
 func init() {
-	Overview.BrokerId = utils.LocalId()
+	Overview.BrokerId.Set(utils.LocalId())
+}
+func (this *OverviewData) Copy() *OverviewData {
+	var ov OverviewData
+
+	_fromv := reflect.ValueOf(this)
+	_tov := reflect.ValueOf(&ov)
+	_t := _fromv.Type().Elem()
+	fnum := _t.NumField()
+	for i := 0; i < fnum; i++ {
+		if tv, ok := _tov.Elem().Field(i).Addr().Interface().(AtmType); ok {
+			tv.Set(_fromv.Elem().Field(i).Addr().Interface().(AtmType).Get())
+		}
+
+	}
+	return &ov
 }
