@@ -55,9 +55,10 @@ func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 		this.willQos = msg.WillQos
 		this.willMessage = msg.WillMessage
 	}
-	//save keep alive (seconds)
 
-	atomic.StoreInt64(&this.timeout, int64(float64(msg.Keepalive)*1.5*float64(time.Second)))
+	//save keep alive (seconds)
+	this.keepalive = int64(float64(msg.Keepalive) * 1.5 * float64(time.Second))
+	this.resetTimeout()
 	return
 }
 
@@ -96,7 +97,7 @@ func (this *Session) BroadcastSessionInfo() {
 		return
 	}
 	if len(sessionQosMap) == 0 {
-		log.Info("sessionQosMap is empty for topic:", infoTopic)
+		log.Debug("sessionQosMap is empty for topic:", infoTopic)
 		return
 	}
 	nmsg := packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)

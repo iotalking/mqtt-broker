@@ -195,7 +195,7 @@ func (this *sessionMgr) tickerRun() {
 
 			usedNs := time.Now().Sub(preTime).Nanoseconds()
 			d := time.Second - time.Duration(usedNs)
-			log.Info("ontick used:", usedNs)
+			log.Debug("ontick used:", usedNs)
 			if usedNs > dashboard.Overview.MaxTickerBusyTime.Get().(int64) {
 				dashboard.Overview.MaxTickerBusyTime.Set(usedNs)
 			}

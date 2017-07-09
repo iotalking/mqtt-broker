@@ -96,6 +96,8 @@ type Session struct {
 
 	//最后一次读写成功的时间
 	timeout int64
+	//从客户端的CONNECT命令中获取的keepalive
+	keepalive int64 //nano 纳秒
 
 	//发送中的消息，超时需要重发
 	//带MessageID的消息才会插入inflightList
@@ -148,6 +150,7 @@ func NewSession(mgr SessionMgr, conn io.ReadWriteCloser, isServer bool) *Session
 	s := &Session{
 		mgr:             mgr,
 		isServer:        isServer,
+		keepalive:       config.PingTimeout,
 		publishChan:     make(chan *packets.PublishPacket),
 		remoteMsgChan:   make(chan packets.ControlPacket),
 		sentMsgChan:     make(SentChan, 1),
@@ -478,7 +481,7 @@ func (this *Session) mgrOnDisconnected() {
 }
 
 func (this *Session) mgrOnPingTimeout() {
-	log.Debug("mgrOnPingTimeout")
+	log.Info("mgrOnPingTimeout")
 	if atomic.LoadInt32(&this.clostep) > 0 {
 		return
 	}
@@ -613,14 +616,14 @@ func (this *Session) resetTimeout() {
 	//服务端判断ping有没有超时
 	if this.isServer {
 		if this.IsConnected() {
-			atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.PingrespTimeout)
+			atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+this.keepalive)
 		} else {
 			atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.ConnectTimeout)
 		}
 
 	} else {
 		//客户端判断接收PINGRESP超时
-		atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+config.PingTimeout)
+		atomic.StoreInt64(&this.timeout, time.Now().UnixNano()+this.keepalive)
 	}
 }
 
