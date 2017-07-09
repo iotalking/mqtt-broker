@@ -57,7 +57,7 @@ func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 	}
 	//save keep alive (seconds)
 
-	atomic.StoreInt64(&this.timeout, int64(float64(this.timeout)*1.5*float64(time.Second)))
+	atomic.StoreInt64(&this.timeout, int64(float64(msg.Keepalive)*1.5*float64(time.Second)))
 	return
 }
 
