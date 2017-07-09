@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"sync/atomic"
+	"time"
 
 	"github.com/eclipse/paho.mqtt.golang/packets"
 
@@ -54,7 +55,9 @@ func (this *Session) onConnect(msg *packets.ConnectPacket) (err error) {
 		this.willQos = msg.WillQos
 		this.willMessage = msg.WillMessage
 	}
+	//save keep alive (seconds)
 
+	atomic.StoreInt64(&this.timeout, this.timeout*int64(time.Second))
 	return
 }
 
