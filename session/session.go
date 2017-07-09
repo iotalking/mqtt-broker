@@ -699,3 +699,9 @@ func (this *Session) onDisconnectException(reason DisconnectReason) {
 		atomic.StoreInt32(&this.hadDisconnectException, int32(reason))
 	}
 }
+func (this *Session) SetKeepalive(keepalive int64) {
+	this.keepalive = keepalive
+}
+func (this *Session) GetKeepalive() int64 {
+	return this.keepalive
+}

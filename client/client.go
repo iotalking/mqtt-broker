@@ -90,6 +90,12 @@ func (this *Client) Connect(proto, addr string) (token session.Token, err error)
 		connectMsg.PasswordFlag = true
 		connectMsg.Password = this.password
 		connectMsg.ClientIdentifier = this.clientId
+		if this.Keepalive == 0 {
+			connectMsg.Keepalive = uint16(this.session.GetKeepalive())
+		} else {
+			connectMsg.Keepalive = this.Keepalive
+		}
+
 		token, err = this.session.Send(connectMsg)
 	} else {
 		log.Error("connect error:", err)
@@ -168,4 +174,11 @@ func (this *Client) SetOnMessage(cb func(topic string, body []byte, qos byte)) {
 }
 func (this *Client) SetOnDisconnected(cb func()) {
 	this.session.SetOnDisconnected(cb)
+}
+
+func (this *Client) SetKeepalive(keepalive uint16) {
+	this.Keepalive = keepalive
+}
+func (this *Client) GetKeepalive() uint16 {
+	return this.Keepalive
 }
