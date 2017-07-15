@@ -12,9 +12,9 @@ import (
 	log "github.com/Sirupsen/logrus"
 
 	"github.com/iotalking/mqtt-broker/config"
-	"github.com/iotalking/mqtt-broker/dashboard/api"
 	"github.com/iotalking/mqtt-broker/network/tcp"
 	"github.com/iotalking/mqtt-broker/network/websocket"
+	"github.com/iotalking/mqtt-broker/restful_api"
 	"github.com/iotalking/mqtt-broker/session"
 	"github.com/iotalking/mqtt-broker/www"
 

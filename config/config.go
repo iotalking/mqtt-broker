@@ -29,6 +29,7 @@ var RestfulPort = 8081
 
 var DashboordUrl = "/dashboard"
 var DashboordApiUrl = DashboordUrl + "/api"
+var RestfullApiUrl = "/api"
 
 //发送心跳包的周期（秒）
 var PingTimeout = 30 * int64(time.Second)

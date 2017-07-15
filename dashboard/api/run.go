@@ -1,10 +1,7 @@
 package api
 
 import (
-	"net/http"
 	"time"
-
-	log "github.com/Sirupsen/logrus"
 
 	"github.com/iotalking/mqtt-broker/dashboard"
 	"github.com/iotalking/mqtt-broker/session"
@@ -19,27 +16,17 @@ var startTime time.Time
 var getChan chan byte
 var outChan chan dashboard.OverviewData
 
-func Start(addr string, mgr SessionMgr) {
+func Start(mgr SessionMgr) {
 	startTime = time.Now()
 
 	sessionMgr = mgr
 	getChan = make(chan byte)
 	outChan = make(chan dashboard.OverviewData)
-	run(addr)
+	run()
 }
 
-func run(addr string) {
-	router()
-	s := http.Server{}
-	s.Addr = addr
-	s.Handler = mux
-	go func() {
-		log.Debugf("dashboad http started on :%s", addr)
-		err := s.ListenAndServe()
-		if err != nil {
-			panic(err)
-		}
-	}()
+func run() {
+
 	duration := time.Second
 	var _secondsTimer = time.NewTimer(duration)
 	var lastSentMsgCnt = dashboard.Overview.SentMsgCnt

@@ -1,0 +1,128 @@
+<html>
+
+	<head>
+		<meta charset="utf-8" />
+		<title>智能锁</title>
+		<script src="../libs/vue.js"></script>
+		<script src="../libs/mqtt.js"></script>
+	</head>
+
+	<body style="padding: 0;margin: 0;">
+		<div id="app">
+			<div class="button-box">
+				<div class="button" v-on:click="onOpen">
+					<div class="button-text">开门</div>
+				</div>
+				<div class="button" v-on:click="onClose">
+					<div class="button-text">关门</div>
+				</div>
+			</div>
+		</div>
+		<style type="text/css">
+			.button-box{
+				text-align:center;
+			}
+			.button{
+				position:relative;
+				border-radius:100%;
+				width:100px;
+				height:100px;
+				border:1px solid red;
+				text-align:center;
+				display:inline-block;
+			}
+			.button-text{
+				position:absolute;
+				left: 30px;
+			    top: 35px;
+			    font-size: 20px;
+			}
+		</style>
+	</body>
+	<script type="text/javascript">
+		var app = new Vue({
+			el: '#app',
+			data: {
+				clientId:'board_' + Math.random().toString(16).substr(2, 8),
+			},
+			mounted: function() {
+				this.connect();
+			},
+			mouseDown: false,
+			destroyed: function() {
+				
+			},
+			methods: {
+				//topic
+				GetLockerTopic:function(){
+					return "/iotalking/lockers/#"
+				},
+				GetDeviceTopic:function(){
+					return "/iotalking/lockers/esp32_066FB8"
+				},
+				onOpen:function(){
+					this.Open();
+				},
+				onClose:function(){
+					this.Close();
+				},
+				Open:function(){
+					this.client.publish(this.GetDeviceTopic(),"02c2031701ddff");
+				},
+				Close:function(){
+					this.client.publish(this.GetDeviceTopic(),"02c2031702deff");
+				},
+				onConnect: function() {
+					window.client = this.client;
+					this.client.subscribe(
+						[
+							this.GetLockerTopic(),
+						]);
+
+					this.client.on('message', function(topic, payload) {
+						app.onMessage(topic, payload);
+					});
+					this.client.on('offline', this.onOffline);
+
+				},
+				onOffline:function(){
+					this.client = null;
+				},
+				onMessage: function(topic, payload) {
+					console.log("topic:",topic,"payload:",payload.toString());
+					
+				},
+
+				connect: function() {
+					if(this.client) {
+						return;
+					}
+					var hostname = location.hostname;
+					var client = mqtt.connect('ws://' + hostname + ':8083/mqtt',{
+						clientId:this.clientId,
+					});
+					this.client = client;
+					client = null;
+
+					this.client.on('connect', function() {
+						app.onConnect();
+					});
+				},
+				
+				disconnect: function() {
+					
+					this.client.end();
+					this.client = null;
+				},
+				
+				publish: function(data) {
+					data.clientId = this.clientId;
+					if(this.client && this.client.connected) {
+						this.client.publish(this.DataTopic(), JSON.stringify(data));
+					}
+				},
+			}
+		})
+	</script>
+
+</html>

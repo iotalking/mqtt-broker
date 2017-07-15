@@ -17,6 +17,7 @@ func runter() {
 	mux.HandleDir("/www/libs/", "./www/libs/")
 	mux.HandleDir("/www/dashboard/", "./www/dashboard/")
 	mux.HandleDir("/dist/", "./www/dashboard/dist/")
+	mux.HandleDir("/www/locker/", "./www/locker/")
 	HandleWhiteBoard("/www/whiteboard/", "./www/whiteboard/")
 }
 func HandleWhiteBoard(pattern, dir string) {

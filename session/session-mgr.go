@@ -30,6 +30,9 @@ type SessionMgr interface {
 	GetSessions() SessionList
 	GetStoreMgr() store.StoreMgr
 	BroadcastSessionInfo(session *Session)
+
+	//给包外部调用
+	Publish(topic string, msg []byte, qos byte) error
 }
 
 type SessionList struct {
@@ -393,4 +396,22 @@ func (this *sessionMgr) GetSubscriptionMgr() topic.SubscriptionMgr {
 }
 func (this *sessionMgr) GetStoreMgr() store.StoreMgr {
 	return this.storeMgr
+}
+
+func (this *sessionMgr) Publish(topic string, msg []byte, qos byte) (err error) {
+
+	sessinMap, err := this.GetSubscriptionMgr().GetSessions(topic)
+	if err != nil {
+		return
+	}
+	for key, _ := range sessinMap {
+		if s, ok := key.(*Session); ok {
+			var pkg = packets.NewControlPacket(packets.Publish).(*packets.PublishPacket)
+			pkg.TopicName = topic
+			pkg.Payload = msg
+			pkg.Qos = qos
+			s.Publish(pkg)
+		}
+	}
+	return
 }
