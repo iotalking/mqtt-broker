@@ -9,27 +9,49 @@
 
 	<body style="padding: 0;margin: 0;">
 		<div id="app">
-			<div class="button-box">
+			<div class="screen">
+				<div class="va">
+					
+				</div>
 				<div class="button" v-on:click="onOpen">
-					<div class="button-text">开门</div>
+					<img src="img/open.png"/>
 				</div>
 				<div class="button" v-on:click="onClose">
-					<div class="button-text">关门</div>
+					<img src="img/close.png"/>
 				</div>
 			</div>
 		</div>
 		<style type="text/css">
-			.button-box{
-				text-align:center;
+			.screen{
+				position: absolute;
+				top: 0;
+				left: 0;
+				right: 0;
+				bottom: 0;
+				vertical-align:top;
+				/*border: 1px solid red;*/
+				text-align: center;
+			}
+			.va{
+				width: 1px;
+				height: 100%;
+				display: inline-block;
+				vertical-align: middle;
 			}
 			.button{
 				position:relative;
+				margin: 10%;
 				border-radius:100%;
-				width:100px;
-				height:100px;
-				border:1px solid red;
+				width:20%;
+				display: inline-block;
 				text-align:center;
-				display:inline-block;
+				vertical-align: middle;
+			}
+			.button:active{
+				border: 1px solid red;
+			}			
+			.button img{
+				width: 100%;
 			}
 			.button-text{
 				position:absolute;
