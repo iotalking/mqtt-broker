@@ -47,7 +47,7 @@ func NewClient(id string, mgr session.SessionMgr) *Client {
 //连接服务器
 //proto:mqtt,mqtts,ws,wss
 //mqtt:tcp
-//mqtt:tcp tls
+//mqtts:tcp tls
 //ws:websocket
 //wss:websocket tls
 //addr格式：
@@ -181,4 +181,7 @@ func (this *Client) SetKeepalive(keepalive uint16) {
 }
 func (this *Client) GetKeepalive() uint16 {
 	return this.Keepalive
+}
+func (this *Client) GetID() string {
+	return this.clientId
 }

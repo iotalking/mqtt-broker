@@ -2,7 +2,6 @@ package topic
 
 import (
 	"testing"
-	"time"
 )
 
 func equalSlice(a, b []interface{}) bool {
@@ -16,6 +15,17 @@ func equalSlice(a, b []interface{}) bool {
 	}
 	return true
 }
+func checkSessions(t *testing.T, m SessoinQosMap, s []int) {
+	if len(m) != len(s) {
+		t.FailNow()
+	}
+	for _, c := range s {
+		if _, ok := m[c]; !ok {
+			t.FailNow()
+		}
+
+	}
+}
 func TestNode(t *testing.T) {
 	root := newNode()
 	root.add("a/b/+", 1, 1)
@@ -27,30 +37,19 @@ func TestNode(t *testing.T) {
 	root.add("+/+/#", 0, 7)
 	root.add("+/b/+", 2, 8)
 	root.add("aaaaa/bbbbb/ccccc/ddddd/eeeee/fffff/ggggg/hhhhh/iiiii/jjjjj", 0, 9)
-	last := time.Now()
+
 	ss := root.getSessions("a/b/d")
-	t.Logf("use time:%d\n", time.Since(last))
-	t.Logf("a/b/d:%#v", ss)
 
-	last = time.Now()
 	ss = root.getSessions("a/b/c")
-	t.Logf("use time:%d\n", time.Since(last))
-	t.Logf("a/b/c:%#v", ss)
+	checkSessions(t, ss, []int{1, 3, 5, 6, 7, 8})
 
-	last = time.Now()
 	ss = root.getSessions("f")
-	t.Logf("use time:%d\n", time.Since(last))
-	t.Logf("f:%#v", ss)
-
-	last = time.Now()
+	checkSessions(t, ss, []int{3})
 	ss = root.getSessions("g/h")
-	t.Logf("use time:%d\n", time.Since(last))
-	t.Logf("g/h:%#v", ss)
+	checkSessions(t, ss, []int{3})
 
-	last = time.Now()
 	ss = root.getSessions("a/2/d")
-	t.Logf("use time:%d\n", time.Since(last))
-	t.Logf("a/2/d:%#v", ss)
+	checkSessions(t, ss, []int{3, 4, 6, 7})
 
 }
 
