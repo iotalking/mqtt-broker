@@ -31,7 +31,7 @@ type Client struct {
 	WillMessage []byte
 	WillQos     byte
 	WillRetain  bool
-	Keepalive   uint16
+	Keepalive   uint16 //second
 
 	mainRuntine *runtine.SafeRuntine
 }
@@ -91,7 +91,7 @@ func (this *Client) Connect(proto, addr string) (token session.Token, err error)
 		connectMsg.Password = this.password
 		connectMsg.ClientIdentifier = this.clientId
 		if this.Keepalive == 0 {
-			connectMsg.Keepalive = uint16(this.session.GetKeepalive())
+			connectMsg.Keepalive = uint16(this.session.GetKeepalive() / int64(time.Second))
 		} else {
 			connectMsg.Keepalive = this.Keepalive
 		}
