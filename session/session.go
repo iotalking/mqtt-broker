@@ -66,7 +66,7 @@ type Session struct {
 	clientId string
 	channel  *Channel
 	isServer bool
-	runtine  *runtine.SafeRuntine
+	runtine  runtine.SafeRuntine
 
 	//>0不能再发送消息和接入到消息
 	clostep int32

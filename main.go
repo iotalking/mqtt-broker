@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	pprof "runtime/pprof"
 	"runtime/trace"
 	"sync"
 
@@ -49,9 +50,23 @@ var basePort = 1883
 var sessionMgr = session.GetMgr()
 var level = flag.String("log", "debug", "log level string")
 var traceFileName = flag.String("trace", "", "out trace to file")
+var cpuprofile = flag.String("cpuprofile", "", "CPU Profile Filename")
 
 func main() {
 	flag.Parse()
+
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		pprof.StartCPUProfile(f)
+		defer func() {
+			pprof.StopCPUProfile()
+			f.Close()
+		}()
+	}
 
 	if len(*traceFileName) > 0 {
 		f, err := os.OpenFile(*traceFileName, os.O_CREATE|os.O_WRONLY, 0666)

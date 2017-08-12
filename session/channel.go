@@ -31,8 +31,8 @@ type Channel struct {
 	iSendList *utils.List
 	//写入从net.Conn里接入到的消息
 	session     *Session
-	recvRuntine *runtine.SafeRuntine
-	sendRuntine *runtine.SafeRuntine
+	recvRuntine runtine.SafeRuntine
+	sendRuntine runtine.SafeRuntine
 
 	//取后通讯的时间戳，即最后发包，收包时间
 	lastStamp int64
@@ -54,13 +54,11 @@ func NewChannel(c io.ReadWriteCloser, session *Session) *Channel {
 	return channel
 }
 func (this *Channel) Start() {
-	this.recvRuntine = runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
-		this.recvRuntine = r
+	this.recvRuntine.Go(func(args ...interface{}) {
 		log.Debug("channel recv running")
 		this.recvRun()
 	})
-	this.sendRuntine = runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
-		this.sendRuntine = r
+	this.sendRuntine.Go(func(args ...interface{}) {
 		log.Debug("channel send running")
 		this.sendRun()
 	})
@@ -119,7 +117,7 @@ func (this *Channel) sendRun() {
 					return
 				}
 			}
-			this.session.checkInflightList()
+			//			this.session.checkInflightList()
 		}
 	}
 
@@ -166,9 +164,7 @@ func (this *Channel) Close() {
 	this.conn.Close()
 	dashboard.Overview.OpenedFiles.Add(-1)
 	this.sendRuntine.Stop()
-	this.sendRuntine = nil
 	this.recvRuntine.Stop()
-	this.recvRuntine = nil
 }
 
 func (this *Channel) IsStop() bool {

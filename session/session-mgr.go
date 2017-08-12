@@ -42,7 +42,7 @@ type SessionList struct {
 
 type sessionMgr struct {
 	//主runtine
-	runtine *runtine.SafeRuntine
+	runtine runtine.SafeRuntine
 
 	//用于处理新连接
 	insertSessionChan chan *Session
@@ -78,14 +78,14 @@ type sessionMgr struct {
 	getAllSessionChan       chan byte
 	getAllSessionResultChan chan []*Session
 
-	closeSessionRuntine *runtine.SafeRuntine
+	closeSessionRuntine runtine.SafeRuntine
 	closeSessionChan    chan *Session
 
-	tickerRuntine *runtine.SafeRuntine
+	tickerRuntine runtine.SafeRuntine
 	//处理看板广播的协程
-	overviewRuntine *runtine.SafeRuntine
+	overviewRuntine runtine.SafeRuntine
 	//处理sessionInfo的广播
-	sessionInfoRuntine *runtine.SafeRuntine
+	sessionInfoRuntine runtine.SafeRuntine
 
 	sessionInfoList *utils.List
 
@@ -117,15 +117,13 @@ func GetMgr() SessionMgr {
 			sessionInfoList:                 utils.NewList(),
 			storeMgr:                        store.NewStoreMgr(),
 		}
-		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
-			mgr.runtine = r
+		mgr.runtine.Go(func(args ...interface{}) {
 			mgr.run()
 		})
-		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
-			mgr.closeSessionRuntine = r
+		mgr.closeSessionRuntine.Go(func(args ...interface{}) {
 			for {
 				select {
-				case <-r.IsInterrupt:
+				case <-mgr.closeSessionRuntine.IsInterrupt:
 
 					return
 				case s := <-mgr.closeSessionChan:
@@ -139,16 +137,13 @@ func GetMgr() SessionMgr {
 			}
 			log.Info("closeSessionRuntine is closed")
 		})
-		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
-			mgr.tickerRuntine = r
+		mgr.tickerRuntine.Go(func(args ...interface{}) {
 			mgr.tickerRun()
 		})
-		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
-			mgr.overviewRuntine = r
+		mgr.overviewRuntine.Go(func(args ...interface{}) {
 			mgr.overviewRun()
 		})
-		runtine.Go(func(r *runtine.SafeRuntine, args ...interface{}) {
-			mgr.sessionInfoRuntine = r
+		mgr.sessionInfoRuntine.Go(func(args ...interface{}) {
 			mgr.sessionInfoRun()
 		})
 		gSessionMgr = mgr
