@@ -151,7 +151,13 @@ func (this *Session) sendToSubcriber(msg *packets.PublishPacket) error {
 	msg.Retain = false
 	for v, qos := range sessionQosMap {
 		s := v.(*Session)
-		if s != this && s.IsConnected() && !s.IsClosed() {
+		if config.SendToSelf == false {
+			//不给自己发消息
+			if s == this {
+				continue
+			}
+		}
+		if s.IsConnected() && !s.IsClosed() {
 			nmsg := msg.Copy()
 			//qos取订阅和原消息的最小值
 			if qos < msg.Qos {

@@ -57,3 +57,6 @@ var MaxRetryTimes int = 5
 
 //每个session 最大pedding消息数
 var MaxSizeOfPublishMsg = 10 * 1024
+
+//是否给支持自己给自己发消息
+var SendToSelf = true
