@@ -158,6 +158,7 @@ func NewSession(mgr SessionMgr, conn io.ReadWriteCloser, isServer bool) *Session
 		peddingMsgList:  utils.NewList(),
 		peddingChan:     make(chan byte, config.MaxSizeOfPublishMsg),
 	}
+	s.resetTimeout()
 	NewChannel(conn, s)
 
 	return s
